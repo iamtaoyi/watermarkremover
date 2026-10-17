@@ -6,9 +6,9 @@
 #   ssh-copy-id -i ~/.ssh/clipflow_ecs.pub root@<ECS公网IP>
 #
 # 用法：
-#   ./deploy/deploy-from-local.sh 39.106.108.70 '你的Token'
-#   AMK_API_KEY=xxx PUBLIC_BASE_URL=http://39.106.108.70:8787 \
-#     ./deploy/deploy-from-local.sh 39.106.108.70 '你的Token'
+#   ./deploy/deploy-from-local.sh <ECS公网IP> '你的Token'
+#   AMK_API_KEY=xxx PUBLIC_BASE_URL=http://<ECS公网IP>:8787 \
+#     ./deploy/deploy-from-local.sh <ECS公网IP> '你的Token'
 # ============================================================
 set -euo pipefail
 
