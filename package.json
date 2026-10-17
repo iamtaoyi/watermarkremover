@@ -1,0 +1,14 @@
+{
+  "name": "watermarkremover",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "内部全自动视频去水印/去字幕网站：Token 登录 / MD5 秒传 / 云端擦除 / 12 小时过期 / 预览与下载",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,56 @@
+# ============================================================
+# ClipFlow 反向代理示例（Nginx）
+# 放到 /etc/nginx/conf.d/clipflow.conf，然后 nginx -t && systemctl reload nginx
+# 作用：对外只开 80/443，内部转发到只监听 127.0.0.1:8787 的应用
+# ============================================================
+server {
+    listen 80;
+    listen [::]:80;
+    # 有域名就填域名；只用 IP 访问就写成 server_name _;
+    server_name video.example.com;
+
+    # 上传体积不设限（应用自身限制 2 GB），否则大视频会被 Nginx 挡下返回 413
+    client_max_body_size 0;
+    client_body_timeout 600s;
+
+    # 大文件下载/上传不要改写超时
+    proxy_http_version 1.1;
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+    proxy_connect_timeout 15s;
+
+    # 关键：关闭请求缓冲，让上传边收边转发（保持流式，避免落盘二次拷贝）
+    proxy_request_buffering off;
+    proxy_buffering off;
+
+    # 保持文件下载支持断点续传/进度条拖动（不要在代理层关掉 Range）
+    proxy_force_ranges on;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    location / {
+        proxy_pass http://127.0.0.1:8787;
+    }
+}
+
+# ------------------------------------------------------------
+# 配好 HTTPS 后（阿里云免费证书 / certbot），建议把 80 跳转到 443，
+# 并在上面的 server 块基础上加一个 443 server 块：
+#
+# server {
+#     listen 443 ssl;
+#     http2 on;
+#     server_name video.example.com;
+#     ssl_certificate     /etc/nginx/ssl/video.example.com.pem;
+#     ssl_certificate_key /etc/nginx/ssl/video.example.com.key;
+#     ...（其余指令同上）...
+# }
+#
+# server {
+#     listen 80;
+#     server_name video.example.com;
+#     return 301 https://$host$request_uri;
+# }
+# ------------------------------------------------------------

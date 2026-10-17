@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ClipFlow · 批量去字幕（设计稿 v5）</title>
+<style>
+/* ============================================================================
+   设计稿 v5 · 纯静态（只演示界面与交互，不连后端）
+   设计语言沿用线上：灰白画布 + 白色柔和卡片 + 单一黑色主按钮
+   ========================================================================== */
+:root {
+  color-scheme: light;
+  --canvas:#f4f5f7; --card:#fff; --soft:#f6f7f9; --soft-2:#fbfbfd;
+  --ink:#0f1115; --ink-2:#5b6068; --ink-3:#8b9199; --ink-4:#aeb3ba;
+  --line:#e7e9ed; --line-2:#eceef1;
+  --link:#4176e6; --link-soft:#eef4ff;
+  --success:#22c55e; --warn:#f59e0b; --danger:#ec1313;
+  --r-lg:24px; --r-md:16px; --r-sm:12px;
+  --shadow-card:0 2px 4px rgba(16,24,40,.03), 0 24px 48px -28px rgba(16,24,40,.2);
+  --shadow-soft:0 2px 4px rgba(16,24,40,.03), 0 12px 28px -18px rgba(16,24,40,.18);
+  --shadow-pop:0 1px 2px rgba(16,24,40,.04), 0 16px 40px -16px rgba(16,24,40,.24);
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+.container{width:100%;max-width:1160px;margin:0 auto;padding:0 clamp(20px,4vw,24px)}
+.mono{font-family:var(--mono)}
+.muted{color:var(--ink-3);font-size:12.5px;margin:0}
+
+/* ---------- 页头 ---------- */
+.site-header{position:sticky;top:0;z-index:30;backdrop-filter:blur(12px);background:rgba(244,245,247,.88);border-bottom:1px solid var(--line-2)}
+.site-header .bar{display:flex;align-items:center;gap:14px;height:64px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em}
+.brand .mark{width:30px;height:30px;border-radius:9px;background:var(--ink);color:#fff;display:grid;place-items:center;font-size:13px;font-weight:800}
+.brand small{display:block;font-weight:500;font-size:11.5px;color:var(--ink-3);letter-spacing:0}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:16px;font-size:12.5px;color:var(--ink-2)}
+.dot{width:7px;height:7px;border-radius:999px;background:var(--success);display:inline-block;margin-right:6px}
+.link-muted{color:var(--ink-2);text-decoration:none;border-bottom:1px solid transparent}
+.link-muted:hover{color:var(--ink);border-color:#cfd4da}
+
+/* ---------- 页面标题 ---------- */
+.page-head{padding:26px 0 16px}
+.page-head h1{margin:0 0 6px;font-size:clamp(22px,2.4vw,28px);letter-spacing:-.02em}
+.page-head p{margin:0;color:var(--ink-2);font-size:13.5px}
+
+/* ---------- 卡片 ---------- */
+.card{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:clamp(18px,2.4vw,24px);margin-bottom:16px}
+.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.card-head h2{margin:0 0 4px;font-size:17px;letter-spacing:-.01em}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:600;background:var(--soft);color:var(--ink-2);flex:none}
+.pill-ok{background:#eefaf3;color:#14713c}
+.pill-run{background:var(--link-soft);color:#2b5fd0}
+.pill-wait{background:#fdf3e3;color:#92500e}
+.pill-bad{background:#fdecec;color:#b91c1c}
+.pill-skip{background:#f2f3f5;color:var(--ink-3)}
+
+/* ---------- 添加视频 ---------- */
+.dropzone{margin-top:14px;border:1.5px dashed #d9dde3;border-radius:var(--r-md);background:var(--soft-2);padding:20px;text-align:center;transition:border-color .18s,background .18s}
+.dropzone:hover{border-color:#c3c9d2;background:var(--soft)}
+.dropzone .up-icon{width:38px;height:38px;margin:0 auto 8px;border-radius:12px;background:var(--card);box-shadow:var(--shadow-soft);display:grid;place-items:center;font-size:16px;color:var(--ink-2)}
+.dropzone strong{display:block;font-size:14px}
+.dropzone .hint{font-size:12.5px;color:var(--ink-3);margin-top:6px}
+
+/* ---------- 批次汇总（吸顶，滚动时始终可见） ---------- */
+.summary{position:sticky;top:64px;z-index:10;background:var(--card);padding:14px 0 12px;margin-top:14px;border-bottom:1px solid var(--line-2)}
+.summary-top{display:flex;flex-wrap:wrap;align-items:center;gap:9px 14px;margin-bottom:10px}
+.summary-top .big{font-size:15px;font-weight:650}
+.chip-count{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:11.5px;background:var(--soft);color:var(--ink-2)}
+.chip-count b{color:var(--ink);font-weight:650}
+.chip-count.ok b{color:#15803d} .chip-count.run b{color:var(--link)}
+.chip-count.wait b{color:#92500e} .chip-count.bad b{color:var(--danger)}
+.summary-top .eta{margin-left:auto;font-size:12.5px;color:var(--ink-2)}
+.bar{height:8px;border-radius:999px;background:#e9ebef;overflow:hidden}
+.bar>span{display:block;height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,#0f1115,#3a3f47);transition:width .5s ease}
+
+/* ---------- 任务列表 ---------- */
+.list{border:1px solid var(--line-2);border-radius:var(--r-md);overflow:hidden}
+.row{display:grid;grid-template-columns:34px 76px minmax(0,1fr) auto;align-items:center;gap:14px;padding:11px 14px;background:var(--card)}
+.row+.row{border-top:1px solid var(--line-2)}
+.row.is-open{background:var(--soft-2)}
+.row .idx{font-family:var(--mono);font-size:12px;color:var(--ink-4);text-align:right}
+.thumb{width:76px;height:44px;border-radius:8px;background:#141821;display:grid;place-items:center;font-size:10.5px;font-family:var(--mono);color:#8390a6;position:relative;overflow:hidden}
+.thumb.done{color:#8ea0ff}
+.thumb.skip{background:var(--soft);color:var(--ink-4)}
+.thumb::after{content:"";position:absolute;inset:0;background:linear-gradient(135deg,rgba(122,162,255,.22),transparent 60%)}
+.row-main{min-width:0}
+.row-title{display:flex;align-items:baseline;gap:10px;min-width:0}
+.row-title .name{font-weight:600;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row-title .meta{font-size:11.5px;color:var(--ink-4);font-family:var(--mono);flex:none}
+.row-sub{margin-top:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.row-sub .stage{font-size:11.5px;color:var(--ink-3)}
+.row-sub .bar{flex:1 1 auto;max-width:200px;height:6px}
+.row-sub .bar>span{background:linear-gradient(90deg,var(--link),#6f9bff)}
+.row-actions{display:flex;align-items:center;gap:8px;flex:none}
+
+/* ---------- 按钮 ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:13px 22px;border-radius:var(--r-sm);cursor:pointer;font-family:inherit;font-size:14.5px;font-weight:600;border:1px solid transparent;transition:transform .15s,background .18s,box-shadow .18s}
+.btn:active{transform:translateY(1px)}
+.btn-primary{background:var(--ink);color:#fff;box-shadow:0 12px 26px -14px rgba(15,17,21,.75)}
+.btn-primary:hover{background:#26282e}
+.btn-ghost{background:var(--card);border-color:var(--line);color:var(--ink)}
+.btn-ghost:hover{background:var(--soft)}
+.btn-sm{padding:8px 15px;font-size:13px;border-radius:10px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.btn:disabled{cursor:not-allowed;opacity:.5;filter:grayscale(1);box-shadow:none;transform:none;pointer-events:none}
+.btn-ghost:disabled{background:var(--soft);color:var(--ink-3);border-color:var(--line-2)}
+.btn-stop{color:#b91c1c;border-color:#f0d5d5}
+.btn-stop:hover{background:#fdecec}
+/* 取消态：红色实心，和"全部开始"的黑色主按钮形成明确对比 */
+.btn-danger{background:var(--danger);color:#fff;box-shadow:0 12px 26px -14px rgba(236,19,19,.7)}
+.btn-danger:hover{background:#cf1010}
+/* 预览按钮展开时的"按下"态，让当前是哪一行一目了然 */
+.row.is-open .btn-preview{background:var(--ink);border-color:var(--ink);color:#fff}
+
+/* ---------- 对比预览（展开在行下方） ---------- */
+.panel{background:var(--soft-2);border-top:1px solid var(--line-2);padding:14px 14px 16px}
+.panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.panel-title{font-size:12.5px;color:var(--ink-2);display:flex;align-items:center;gap:8px}
+.panel-title b{color:var(--ink);font-weight:650}
+.preview-pair{display:grid;grid-template-columns:1fr 1fr;column-gap:0}
+.preview-item{min-width:0;display:flex;flex-direction:column}
+.panel-cap{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin-bottom:8px}
+.preview-item:last-child .panel-cap,.preview-item:last-child .expiry-row{padding-left:14px}
+.preview{margin:0;border-radius:0;overflow:hidden;background:#0f1115}
+.preview-item:first-child .preview{border-top-left-radius:var(--r-md);border-bottom-left-radius:var(--r-md)}
+.preview-item:last-child .preview{border-top-right-radius:var(--r-md);border-bottom-right-radius:var(--r-md);border-left:1px solid #262b33}
+
+/* 画面示意：源视频里有一条白色硬字幕，产物里没有（一眼看出"字幕被擦掉"） */
+.mock{position:relative;aspect-ratio:16/9;max-height:260px;background:linear-gradient(135deg,#1b2430,#2d3a4d);overflow:hidden}
+.mock::before{content:"";position:absolute;left:12%;top:24%;width:32%;height:34%;border-radius:8px;background:#7aa2ff;animation:drift 7s ease-in-out infinite alternate}
+.mock::after{content:"这是硬字幕";position:absolute;left:50%;bottom:15%;transform:translateX(-50%);font-size:13px;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.75)}
+.mock.clean::after{content:""}
+@keyframes drift{to{transform:translateX(150px)}}
+.state{aspect-ratio:16/9;max-height:260px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:18px;background:linear-gradient(180deg,#14171d,#0f1115)}
+.glyph{width:32px;height:32px;border-radius:999px;border:2px solid #3a414d}
+.glyph.spin{border-color:#2b313b;border-top-color:var(--link);animation:spin 1s linear infinite}
+.glyph.bad{border-color:#f87171;position:relative}
+.glyph.bad::before,.glyph.bad::after{content:"";position:absolute;left:50%;top:50%;width:14px;height:2px;background:#f87171}
+.glyph.bad::before{transform:translate(-50%,-50%) rotate(45deg)}
+.glyph.bad::after{transform:translate(-50%,-50%) rotate(-45deg)}
+@keyframes spin{to{transform:rotate(360deg)}}
+.state .t{color:#e8eaee;font-size:13.5px;font-weight:600}
+.state .h{color:#9aa1ab;font-size:11.5px;max-width:300px;line-height:1.6}
+.expiry-row{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+.expiry-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;font-size:11px;font-family:var(--mono);color:var(--ink-2);background:var(--soft)}
+
+/* ---------- 批次操作条 ---------- */
+.batch-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--line-2)}
+.batch-bar .disk{font-size:12.5px;color:var(--ink-2)}
+.batch-bar .disk b{font-family:var(--mono);color:var(--ink)}
+.batch-bar .right{display:flex;align-items:center;gap:10px;margin-left:auto}
+
+/* ---------- 设计稿控制条 ---------- */
+.proto-bar{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;z-index:40;display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:999px;background:rgba(15,17,21,.93);color:#fff;box-shadow:var(--shadow-pop);font-size:12px}
+.proto-bar button{border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.08);color:#fff;padding:5px 12px;border-radius:999px;cursor:pointer;font-family:inherit;font-size:12px}
+.proto-bar button:hover{background:rgba(255,255,255,.18)}
+.proto-bar .tag{opacity:.7}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:70px;z-index:50;background:rgba(15,17,21,.95);color:#fff;padding:9px 16px;border-radius:999px;font-size:12.5px;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.on{opacity:1}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width:1000px){
+  .row{grid-template-columns:26px minmax(0,1fr);grid-template-areas:"idx main" ". actions";row-gap:10px}
+  .row .thumb{display:none}
+  .row .idx{grid-area:idx}
+  .row-main{grid-area:main}
+  .row-actions{grid-area:actions;flex-wrap:wrap}
+  .preview-pair{grid-template-columns:1fr;row-gap:16px}
+  .preview-item:last-child .panel-cap,.preview-item:last-child .expiry-row{padding-left:0}
+  .preview-item:first-child .preview{border-radius:var(--r-md) var(--r-md) 0 0}
+  .preview-item:last-child .preview{border-radius:0 0 var(--r-md) var(--r-md);border-left:0;border-top:1px solid #262b33}
+  .summary-top .eta{margin-left:0}
+  .batch-bar .right{width:100%}
+  .batch-bar .right .btn{flex:1 1 auto}
+}
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container bar">
+    <div class="brand"><span class="mark">▶</span><span>ClipFlow<small>批量全自动去字幕</small></span></div>
+    <div class="header-right">
+      <span><span class="dot"></span>会话剩余 <b class="mono">04:09:31</b></span>
+      <a class="link-muted" href="#">退出登录</a>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+  <div class="page-head">
+    <h1>批量去字幕</h1>
+    <p>一次最多 10 个视频；可整批开始，也可单独控制每一个任务；点「预览」展开源视频与目标视频对比。</p>
+  </div>
+
+  <!-- ================= 添加视频 ================= -->
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <h2>添加视频</h2>
+        <p class="muted">可分批添加；内容相同的文件自动跳过（秒传），不重复上传。</p>
+      </div>
+      <span class="pill" id="quota">10 / 10</span>
+    </div>
+    <div class="dropzone">
+      <div class="up-icon">↑</div>
+      <strong>拖拽视频到这里，或点击选择</strong>
+      <div class="hint">支持 MP4 / MOV / MKV / WEBM / AVI 等，单个最大 2 GB，最多 10 个</div>
+    </div>
+  </section>
+
+  <!-- ================= 批次任务 ================= -->
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <h2>批次任务</h2>
+        <p class="muted" id="batchSub">共 10 个文件 · 预计占用磁盘 1.8 GB（可用 28 GB）</p>
+      </div>
+      <span class="pill pill-run" id="batchPill">处理中 2</span>
+    </div>
+
+    <div class="summary">
+      <div class="summary-top">
+        <span class="big" id="bigDone">已完成 3 / 10</span>
+        <span class="chip-count ok">完成 <b id="cDone">3</b></span>
+        <span class="chip-count run">处理中 <b id="cRun">2</b></span>
+        <span class="chip-count wait">上传中 <b id="cUp">1</b></span>
+        <span class="chip-count wait">排队 <b id="cQueued">1</b></span>
+        <span class="chip-count wait">待开始 <b id="cIdle">2</b></span>
+        <span class="chip-count bad">失败 <b id="cBad">1</b></span>
+        <span class="eta" id="eta">预计剩余约 11 分钟</span>
+      </div>
+      <div class="bar"><span id="bar" style="width:30%"></span></div>
+    </div>
+
+    <div class="list" id="list"></div>
+
+    <div class="batch-bar">
+      <span class="disk">预计占用 <b>1.8 GB</b> / 可用 <b>28 GB</b></span>
+      <div class="right">
+        <!-- 批次级也只有一个按钮：全部开始 ⇄ 全部取消 -->
+        <button class="btn btn-primary" id="batchBtn" data-act="start">全部开始</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="proto-bar">
+  <span class="tag">设计稿 v5 · 10-14 23:50</span>
+  <button id="simulate">模拟运行</button>
+  <button id="reset">重置</button>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================================
+   设计稿数据（写死）。真机数据来自 GET /api/batches/:id，一次轮询拿整批。
+   行内按钮规则：
+     预览            → 展开/收起该任务的「源视频 + 目标视频」对比（同时只展开一条）
+     共享按钮三态     → 处理中=停止任务 / 已完成=下载视频（本任务产物） / 其余=开始任务
+   ========================================================================== */
+const INITIAL = [
+  { id:1,  name:'01_产品介绍.mp4',      size:'72.5 MB',  dur:'27 秒',      status:'done' },
+  { id:2,  name:'02_客户案例.mp4',      size:'67.5 MB',  dur:'25 秒',      status:'running', progress:62 },
+  { id:3,  name:'03_年会花絮.mp4',      size:'56.3 MB',  dur:'21 秒',      status:'queued' },
+  { id:4,  name:'04_门店探访.mp4',      size:'128.0 MB', dur:'48 秒',      status:'running', progress:18 },
+  { id:5,  name:'05_培训录像.mp4',      size:'210.4 MB', dur:'1 分 12 秒',  status:'failed', error:'接口无法下载源视频（DownloadFileError）' },
+  { id:6,  name:'06_直播切片.mp4',      size:'88.1 MB',  dur:'33 秒',      status:'done' },
+  { id:7,  name:'07_客户案例(副本).mp4', size:'67.5 MB',  dur:'25 秒',      status:'skip', note:'与 02 内容相同，复用 02 的结果' },
+  { id:8,  name:'08_产品演示.mp4',      size:'95.2 MB',  dur:'36 秒',      status:'uploading', progress:45 },
+  { id:9,  name:'09_售后回访.mp4',      size:'41.7 MB',  dur:'16 秒',      status:'idle' },
+  { id:10, name:'10_活动快剪.mp4',      size:'33.9 MB',  dur:'13 秒',      status:'idle' },
+];
+
+const STATUS = {
+  idle:      { label:'待开始',         pill:'' },
+  uploading: { label:'上传中',         pill:'pill-wait' },
+  queued:    { label:'排队中（云端）',  pill:'pill-wait' },
+  running:   { label:'处理中',         pill:'pill-run' },
+  done:      { label:'已完成',         pill:'pill-ok' },
+  failed:    { label:'失败',           pill:'pill-bad' },
+  skip:      { label:'已跳过（秒传）',  pill:'pill-skip' },
+};
+const CAN_START = ['idle','failed'];          // 可直接开始
+const CAN_STOP  = ['queued','running'];       // 可停止
+const HAS_FILE  = ['done','failed'];          // 已有自己产物的（可下载）
+
+let rows = JSON.parse(JSON.stringify(INITIAL));
+let openId = null;                            // 同一时间只允许一行展开预览
+const el = (id) => document.getElementById(id);
+
+/* ------------------------------------------------------------------ 渲染 */
+function render() {
+  const list = el('list');
+  list.innerHTML = '';
+  rows.forEach((r) => {
+    const st = STATUS[r.status];
+    const row = document.createElement('div');
+    row.className = 'row' + (openId === r.id ? ' is-open' : '');
+    row.innerHTML = `
+      <div class="idx">${String(r.id).padStart(2,'0')}</div>
+      <div class="thumb ${r.status==='done'?'done':r.status==='skip'?'skip':''}">${r.status==='skip'?'秒传':r.dur}</div>
+      <div class="row-main">
+        <div class="row-title"><span class="name">${r.name}</span><span class="meta">${r.size} · ${r.dur}</span></div>
+        <div class="row-sub">
+          <span class="pill ${st.pill}">${st.label}${r.status==='running'?` ${r.progress}%`:''}${r.status==='uploading'?` ${r.progress}%`:''}</span>
+          ${r.status==='running' ? `<div class="bar"><span style="width:${r.progress}%"></span></div><span class="stage">云端正在逐帧擦除字幕 · 已用 6 分钟 · 预计还需约 7 分钟</span>` : ''}
+          ${r.status==='failed' ? `<span class="stage">${r.error}</span>` : ''}
+          ${r.status==='skip' ? `<span class="stage">${r.note}</span>` : ''}
+          ${r.status==='done' ? `<span class="stage">用时 15 分 29 秒 · 产物 108.7 MB</span>` : ''}
+        </div>
+      </div>
+      <div class="row-actions"></div>`;
+
+    // 行内只有两个按钮：预览 + 三态共享按钮
+    const actions = row.querySelector('.row-actions');
+    const mk = (label, cls, enabled, fn) => {
+      const b = document.createElement('button');
+      b.className = `btn ${cls} btn-sm`;
+      b.textContent = label;
+      b.disabled = !enabled;
+      b.onclick = (e) => { e.stopPropagation(); fn(); };
+      actions.appendChild(b);
+      return b;
+    };
+    const isOpen = openId === r.id;
+    mk(isOpen ? '预览 ▾' : '预览 ▸', 'btn-ghost btn-preview', true, () => togglePreview(r.id));
+    const act = rowAction(r);
+    mk(act.label, act.cls, act.enabled, act.fn);
+
+    list.appendChild(row);
+    if (isOpen) list.appendChild(previewPanel(r));
+  });
+
+  renderBatchButton();
+  renderSummary();
+}
+
+/** 共享按钮三态：停止任务 / 下载视频 / 开始任务 */
+function rowAction(r) {
+  if (CAN_STOP.includes(r.status))  return { label:'停止任务', cls:'btn-ghost btn-stop', enabled:true, fn:() => stopRow(r) };
+  if (r.status === 'done')          return { label:'下载视频', cls:'btn-ghost', enabled:true, fn:() => downloadRow(r) };
+  if (r.status === 'skip')          return { label:'下载视频', cls:'btn-ghost', enabled:true, fn:() => downloadRow(r) };
+  return { label:'开始任务', cls:'btn-ghost', enabled:CAN_START.includes(r.status), fn:() => startRow(r) };
+}
+
+/** 对比预览：源视频（上传中显示"正在上传……"）+ 目标视频（随任务状态变化） */
+function previewPanel(r) {
+  const wrap = document.createElement('div');
+  wrap.className = 'panel';
+  const done = r.status === 'done' || r.status === 'skip';
+  const uploading = r.status === 'uploading';
+
+  const srcBody = uploading
+    ? `<div class="state"><div class="glyph spin"></div><div class="t">正在上传……</div><div class="h">${r.name} · ${r.size} · 已上传 ${r.progress}%</div></div>`
+    : `<div class="mock"></div>`;
+
+  const tgtBody = done
+    ? `<div class="mock clean"></div>`
+    : r.status === 'failed'
+      ? `<div class="state"><div class="glyph bad"></div><div class="t">处理失败</div><div class="h">${r.error}</div></div>`
+      : r.status === 'running'
+        ? `<div class="state"><div class="glyph spin"></div><div class="t">正在处理中……</div><div class="h">云端正在逐帧擦除字幕 · 已用 6 分钟 · 预计还需约 7 分钟</div></div>`
+        : uploading
+          ? `<div class="state"><div class="t">等待上传完成</div><div class="h">源视频上传完成后即可开始去字幕</div></div>`
+          : `<div class="state"><div class="t">等待处理</div><div class="h">点这一行的「开始任务」，或底部「全部开始」</div></div>`;
+
+  wrap.innerHTML = `
+    <div class="panel-head">
+      <span class="panel-title">对比预览 · <b>${r.name}</b></span>
+      <button class="btn btn-ghost btn-sm" id="close-${r.id}">收起预览</button>
+    </div>
+    <div class="preview-pair">
+      <div class="preview-item">
+        <div class="panel-cap">源视频</div>
+        <figure class="preview">${srcBody}</figure>
+        <div class="expiry-row">
+          <span class="expiry-chip">${uploading ? '上传完成后计算有效期' : '源文件有效期至 10/16 19:28'}</span>
+        </div>
+      </div>
+      <div class="preview-item">
+        <div class="panel-cap">目标视频</div>
+        <figure class="preview">${tgtBody}</figure>
+        <div class="expiry-row">
+          ${done ? '<span class="expiry-chip">产物有效期至 10/16 19:28</span>' : ''}
+        </div>
+      </div>
+    </div>`;
+  wrap.querySelector(`#close-${r.id}`).onclick = (e) => { e.stopPropagation(); togglePreview(r.id); };
+  return wrap;
+}
+
+/* ------------------------------------------------------------------ 交互 */
+function togglePreview(id) {
+  // 手风琴：展开一条时其它自动收起；再点同一条则收起
+  openId = openId === id ? null : id;
+  render();
+}
+function startRow(r) {
+  if (!CAN_START.includes(r.status)) return;
+  delete r.error; r.status = 'queued'; r.progress = 0;
+  render(); toast(`已开始：${r.name}`);
+}
+function stopRow(r) {
+  if (!CAN_STOP.includes(r.status)) return;
+  r.status = 'idle'; r.progress = 0;
+  render(); toast(`已停止：${r.name}`);
+}
+function downloadRow(r) {
+  // 真机：用该任务自己的产物地址（优先云端直连，失败回退本站），并弹保存对话框
+  toast(`下载本任务产物：${r.name.replace(/\.mp4$/i,'')}-无字幕.mp4`);
+}
+/**
+ * 批次级共享按钮：有任务在跑就显示「全部取消」，否则显示「全部开始」。
+ * 文案与功能由同一个函数决定，避免出现"文字和实际行为不一致"。
+ */
+function renderBatchButton() {
+  const b = el('batchBtn');
+  const startable = rows.filter((r) => r.status === 'idle' || r.status === 'failed').length;
+  const stoppable = rows.filter((r) => CAN_STOP.includes(r.status)).length;
+  if (stoppable > 0) {
+    b.textContent = '全部取消';
+    b.className = 'btn btn-danger';
+    b.disabled = false;
+    b.dataset.act = 'cancel';
+  } else {
+    b.textContent = '全部开始';
+    b.className = 'btn btn-primary';
+    b.disabled = startable === 0;   // 没有可开始的任务时置灰
+    b.dataset.act = 'start';
+  }
+}
+
+el('batchBtn').onclick = () => {
+  const b = el('batchBtn');
+  if (b.disabled) return;
+  if (b.dataset.act === 'cancel') {
+    const targets = rows.filter((r) => CAN_STOP.includes(r.status));
+    targets.forEach((r) => { r.status = 'idle'; r.progress = 0; });
+    render(); toast(`已取消 ${targets.length} 个进行中的任务（已完成的结果保留）`);
+  } else {
+    const targets = rows.filter((r) => r.status === 'idle' || r.status === 'failed');
+    targets.forEach((r) => { delete r.error; r.status = 'queued'; r.progress = 0; });
+    render(); toast(`已提交 ${targets.length} 个任务，云端并行处理`);
+  }
+};
+
+/* ------------------------------------------------------------------ 汇总 */
+function renderSummary() {
+  const n = (s) => rows.filter((x) => x.status === s).length;
+  const done = n('done') + n('skip'), total = rows.length;
+  const running = n('running'), queued = n('queued'), idle = n('idle'), failed = n('failed'), uploading = n('uploading');
+  el('bigDone').textContent = `已完成 ${done} / ${total}`;
+  el('cDone').textContent = done; el('cRun').textContent = running;
+  el('cUp').textContent = uploading; el('cQueued').textContent = queued;
+  el('cIdle').textContent = idle; el('cBad').textContent = failed;
+  el('bar').style.width = `${total ? Math.round(((done + running * 0.5) / total) * 100) : 0}%`;
+  el('quota').textContent = `${total} / 10`;
+  el('batchPill').textContent = running ? `处理中 ${running}`
+    : queued ? `排队 ${queued}` : uploading ? `上传中 ${uploading}`
+    : done === total ? '全部完成' : '待开始';
+  el('batchPill').className = `pill ${running ? 'pill-run' : (queued || uploading) ? 'pill-wait' : done === total ? 'pill-ok' : ''}`;
+  el('eta').textContent = (running + queued)
+    ? `预计剩余约 ${Math.max(1, Math.round((running + queued) * 3.2))} 分钟`
+    : failed ? `${failed} 项失败，可单独重试` : idle ? `${idle} 项待开始` : '全部完成';
+}
+
+/* ------------------------------------------------------------------ 设计稿：模拟进度 */
+let timer = null;
+el('simulate').onclick = () => {
+  if (timer) { clearInterval(timer); timer = null; el('simulate').textContent = '模拟运行'; return; }
+  if (!rows.some((r) => CAN_STOP.includes(r.status))) { toast('请先点某行的「开始任务」或底部「全部开始」'); return; }
+  el('simulate').textContent = '暂停模拟';
+  timer = setInterval(() => {
+    rows.forEach((r) => {
+      if (r.status === 'uploading') {
+        r.progress = Math.min(100, r.progress + Math.round(Math.random() * 22 + 8));
+        if (r.progress >= 100) { r.progress = 0; r.status = 'idle'; }
+      } else if (r.status === 'queued') { r.status = 'running'; r.progress = 5; }
+      else if (r.status === 'running') {
+        r.progress = Math.min(100, r.progress + Math.round(Math.random() * 9 + 3));
+        if (r.progress >= 100) { r.status = 'done'; r.progress = 100; }
+      }
+    });
+    if (!rows.some((r) => CAN_STOP.includes(r.status))) { clearInterval(timer); timer = null; el('simulate').textContent = '模拟运行'; }
+    render();
+  }, 900);
+};
+el('reset').onclick = () => {
+  if (timer) { clearInterval(timer); timer = null; el('simulate').textContent = '模拟运行'; }
+  rows = JSON.parse(JSON.stringify(INITIAL));
+  openId = null;
+  render();
+};
+
+/* ------------------------------------------------------------------ 轻提示 */
+function toast(msg) {
+  const t = el('toast');
+  t.textContent = msg; t.classList.add('on');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 1800);
+}
+
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# 运行时数据（含 Token、上传的视频、产物、SQLite/JSON 库）
+data/
+shots/
+# 系统与编辑器
+.DS_Store
+*.log
+*.bak
+*.bak-*
+# 环境变量（真实密钥永不入库）
+clipflow.env
+.env
+.env.*
+!*.env.example
+# 依赖
+node_modules/

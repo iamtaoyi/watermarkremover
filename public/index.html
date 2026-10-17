@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ClipFlow · 批量全自动视频去字幕</title>
+<meta name="color-scheme" content="light" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+
+  <!-- ============================ 登录门 ============================ -->
+  <div class="auth-gate" id="authGate">
+    <form class="auth-card" id="authForm" autocomplete="on">
+      <span class="mark auth-mark" aria-hidden="true"></span>
+      <h1>ClipFlow</h1>
+      <p class="auth-sub">全自动视频去字幕 · 军石科技内部使用</p>
+      <label class="field">
+        <span>访问 Token</span>
+        <input id="tokenInput" name="token" type="password" placeholder="粘贴管理员分配的 Token"
+               autocomplete="current-password" spellcheck="false" required />
+      </label>
+      <p class="auth-error" id="authError" hidden></p>
+      <button class="btn btn-primary auth-submit" id="loginBtn" type="submit">进入工作台</button>
+      <p class="auth-hint">
+        会话有效期至 <b id="authSessionEnd">今天 23:59</b>，次日需要重新登录。<br />
+        不知道填什么？请联系管理员获取访问 Token。
+      </p>
+    </form>
+  </div>
+
+  <div class="shell" id="appShell" hidden>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="/">
+          <span class="mark" aria-hidden="true"></span>
+          <span>ClipFlow<small>批量全自动去字幕</small></span>
+        </a>
+        <div class="header-right">
+          <span class="session-note"><span class="dot"></span>会话剩余 <b class="mono" id="sessionLeft">--:--:--</b></span>
+          <button class="btn-text" id="logoutBtn" type="button">退出登录</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="container">
+      <div class="page-head">
+        <h1>批量去字幕</h1>
+        <p>一次最多 30 个视频（单个不超过 100 MB）；勾选任务后用「批量开始 / 批量取消」，也可以单独控制每一条；点「预览」展开源视频与目标视频对比。</p>
+      </div>
+
+      <!-- ===================== 添加视频 ===================== -->
+      <section class="card" id="uploadCard">
+        <div class="card-head">
+          <div>
+            <h2>添加视频</h2>
+            <p class="muted">拖入或点击选择，可分批添加；内容相同的文件自动跳过（秒传），不重复上传。</p>
+          </div>
+          <span class="pill" id="quota">0 / 10</span>
+        </div>
+        <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="选择视频文件">
+          <div class="up-icon" aria-hidden="true">↑</div>
+          <strong>拖拽视频到这里，或点击选择</strong>
+          <div class="hint" id="dropHint">正在读取支持格式…</div>
+        </div>
+        <!-- 擦除区域：字幕不在画面下方时（比如在上半部），默认区域可能漏擦 -->
+                  <div class="region-row">
+            <label for="erasePreset">处理模式</label>
+            <select id="erasePreset">
+              <option value="standard" selected>标准模式（默认）</option>
+              <option value="fullscreen">全屏模式（更彻底，耗时约 3 倍）</option>
+            </select>
+            <span class="hint-inline" id="eraseHint">标准模式：识别常规字幕（快）；全屏模式：擦画面任何位置的文字与文字水印（含画面上部字幕、移动文字水印），耗时明显更长</span>
+          </div>
+        <div class="notice notice-danger" id="diskWarn" hidden></div>
+        <input id="fileInput" type="file" accept="video/*,.mkv,.ts,.flv,.wmv,.m4v" multiple hidden />
+      </section>
+
+      <!-- ===================== 批次任务 ===================== -->
+      <section class="card" id="batchCard" hidden>
+        <div class="card-head">
+          <div>
+            <h2>批次任务</h2>
+            <p class="muted" id="batchSub">—</p>
+          </div>
+          <span class="pill" id="batchPill">待开始</span>
+        </div>
+
+        <div class="notice notice-warn" id="notice" hidden></div>
+
+        <div class="summary">
+          <div class="summary-top">
+            <span class="big" id="bigDone">已完成 0 / 0</span>
+            <span class="chip-count ok">完成 <b id="cDone">0</b></span>
+            <span class="chip-count run">处理中 <b id="cRun">0</b></span>
+            <span class="chip-count wait">上传中 <b id="cUp">0</b></span>
+            <span class="chip-count wait">排队 <b id="cQueued">0</b></span>
+            <span class="chip-count wait">待开始 <b id="cIdle">0</b></span>
+            <span class="chip-count bad">失败 <b id="cBad">0</b></span>
+            <span class="eta" id="eta">—</span>
+          </div>
+          <div class="bar"><span id="bar" style="width:0%"></span></div>
+        </div>
+
+        <!-- 批量操作条：只针对勾选过的任务 -->
+        <div class="list-head">
+          <label class="check-all"><input type="checkbox" id="checkAll" />全选</label>
+          <span class="sel-note" id="selNote">未勾选任务</span>
+          <span class="disk" id="diskInfo">—</span>
+          <div class="right">
+            <button class="btn btn-primary" id="batchStart" type="button">批量开始</button>
+            <button class="btn btn-ghost btn-stop" id="batchCancel" type="button">批量取消</button>
+            <button class="btn btn-ghost btn-stop" id="batchDelete" type="button">批量删除</button>
+          </div>
+        </div>
+
+        <div class="list" id="list"></div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <span>ClipFlow · 军石科技公司内部使用</span>
+        <span>登录会话每天 23:59 失效，次日需重新登录</span>
+        <span class="build-tag" id="buildTag"></span>
+      </div>
+    </footer>
+  </div><!-- /shell -->
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
