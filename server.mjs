@@ -18,7 +18,8 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
-import { normalizePhone, findUserByPhone, createUser, checkPassword, publicUser, createUserSession, chargeSeconds, refundSeconds, createCodes, redeemCode, ensureAdmin } from './accounts.mjs';
+import { normalizePhone, findUserByPhone, createUser, checkPassword, publicUser, createUserSession, chargeSeconds, refundSeconds, createCodes, redeemCode, ensureAdmin, setPassword } from './accounts.mjs';
+import { take as takeToken, stats as rateStats } from './ratelimit.mjs';
 import { fileURLToPath } from 'node:url';
 import {
   OPERATIONS,
@@ -295,6 +296,7 @@ db.sessions ||= {};
 db.users ||= {};
 db.creditLedger ||= [];
 db.redemptionCodes ||= {};
+db.abuseEvents ||= [];
 // MD5 → fileId 索引（去重的唯一依据，文件名即 MD5）；旧记录没有 md5 字段，顺手补建索引
 db.md5Index ||= {};
 for (const f of Object.values(db.files)) {
@@ -1595,6 +1597,73 @@ const ROUTES = {
     sendJson(res, 200, { credits: r.credits, balance: r.balance, user: publicUser(user) });
   },
 
+  /** 修改自己的密码（需旧密码） */
+  'POST /api/me/password': async (req, res) => {
+    const user = currentUser(req);
+    if (!user) return sendError(res, 401, '未登录');
+    const body = await readJsonBody(req);
+    const oldPw = String(body.oldPassword ?? '');
+    const newPw = String(body.newPassword ?? '');
+    if (!checkPassword(user, oldPw)) return sendError(res, 400, '当前密码不正确');
+    if (newPw.length < 6) return sendError(res, 400, '新密码至少 6 位');
+    if (newPw === oldPw) return sendError(res, 400, '新密码不能与当前密码相同');
+    setPassword(user, newPw);
+    // 清掉其它会话，保留当前这个
+    const sid = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+    for (const [k, v] of Object.entries(db.sessions)) if (k !== sid && v.userId === user.id) delete db.sessions[k];
+    saveDb();
+    console.log(`[auth] ${user.phone.slice(0,3)}****${user.phone.slice(-4)} 修改了密码`);
+    sendJson(res, 200, { ok: true });
+  },
+
+  /** 管理员重置他人密码（无需旧密码） */
+  'POST /api/admin/reset-password': async (req, res) => {
+    const admin = currentUser(req);
+    if (!admin || admin.role !== 'admin') return sendError(res, 403, '需要管理员权限');
+    const body = await readJsonBody(req);
+    const phone = normalizePhone(body.phone);
+    const newPw = String(body.newPassword ?? '');
+    if (!phone) return sendError(res, 400, '请输入正确的手机号');
+    if (newPw.length < 6) return sendError(res, 400, '新密码至少 6 位');
+    const target = findUserByPhone(db, phone);
+    if (!target) return sendError(res, 404, '该手机号还没有注册');
+    setPassword(target, newPw);
+    for (const [k, v] of Object.entries(db.sessions)) if (v.userId === target.id) delete db.sessions[k];
+    saveDb();
+    console.log(`[admin] 重置了 ${phone.slice(0,3)}****${phone.slice(-4)} 的密码`);
+    sendJson(res, 200, { ok: true });
+  },
+
+  /** 管理员：反作弊事件与用户风险状态 */
+  'GET /api/admin/abuse': async (req, res) => {
+    const admin = currentUser(req);
+    if (!admin || admin.role !== 'admin') return sendError(res, 403, '需要管理员权限');
+    const events = db.abuseEvents.slice(-200).reverse();
+    const users = Object.values(db.users).map((u) => ({
+      id: u.id, phone: u.phone, credits: u.credits, role: u.role,
+      whitelisted: !!u.whitelisted, suspended: u.suspended || null, rateHits: u.rateHits || 0,
+    }));
+    sendJson(res, 200, { events, users });
+  },
+
+  /** 管理员：白名单 / 解除 / 暂停 */
+  'POST /api/admin/abuse/action': async (req, res) => {
+    const admin = currentUser(req);
+    if (!admin || admin.role !== 'admin') return sendError(res, 403, '需要管理员权限');
+    const body = await readJsonBody(req);
+    const target = db.users[body.userId] || findUserByPhone(db, normalizePhone(body.phone));
+    if (!target) return sendError(res, 404, '用户不存在');
+    const action = String(body.action || '');
+    if (action === 'whitelist') { target.whitelisted = true; target.rateHits = 0; }
+    else if (action === 'unwhitelist') { target.whitelisted = false; }
+    else if (action === 'resume') { target.suspended = null; target.rateHits = 0; }
+    else if (action === 'suspend') { target.suspended = { at: new Date().toISOString(), reason: String(body.reason || '管理员手动暂停') }; }
+    else return sendError(res, 400, '未知操作');
+    db.abuseEvents.push({ id: `ab_${Date.now().toString(36)}`, type: `admin:${action}`, userId: target.id, by: admin.id, at: new Date().toISOString() });
+    saveDb();
+    sendJson(res, 200, { ok: true, user: { id: target.id, phone: target.phone, whitelisted: !!target.whitelisted, suspended: target.suspended || null } });
+  },
+
   'POST /api/admin/codes': async (req, res) => {
     const user = currentUser(req);
     if (!user || user.role !== 'admin') return sendError(res, 403, '需要管理员权限');
@@ -2200,6 +2269,28 @@ const server = http.createServer(async (req, res) => {
     (req.method === 'GET' || req.method === 'HEAD') && /^\/f\/vf_[A-Za-z0-9_-]+$/.test(url.pathname);
   const authless = PUBLIC_ROUTES.has(`${req.method} ${url.pathname}`) || capabilityUrl;
 
+  // 限流：全局并发 + 每用户 + 每 IP（白名单/管理员豁免）
+  const meUser = currentUser(req);
+  const isPrivileged = !!meUser && (meUser.role === 'admin' || meUser.whitelisted === true);
+  if (!authless && !isPrivileged) {
+    const ip = clientIp(req);
+    const limit = (key, opt) => {
+      const r = takeToken(key, opt);
+      if (!r.ok) {
+        db.abuseEvents.push({ id: `ab_${Date.now().toString(36)}`, type: 'rate_limit', key, userId: meUser?.id || null, ip, path: url.pathname, at: new Date().toISOString() });
+        if (db.abuseEvents.length > 5000) db.abuseEvents = db.abuseEvents.slice(-5000);
+        if (meUser) { meUser.rateHits = (meUser.rateHits || 0) + 1; if (meUser.rateHits >= 5) meUser.suspended = { at: new Date().toISOString(), reason: '限流触发 5 次，自动暂停' }; }
+        saveDb();
+        sendError(res, 429, `请求过于频繁，请 ${r.retryAfter} 秒后重试`, { retryAfter: r.retryAfter });
+        return true;
+      }
+      return false;
+    };
+    if (limit(`user:${meUser?.id || ip}`, { rate: 2, burst: 60 })) return;
+    if (limit(`ip:${ip}`, { rate: 5, burst: 150 })) return;
+    if (meUser?.suspended) return sendError(res, 403, `账号已被暂停：${meUser.suspended.reason}，请联系管理员`);
+  }
+
   // 归属校验：批次/任务必须属于当前用户（管理员例外，历史无主数据放行）
   if (!authless) {
     const me = currentUser(req);
@@ -2237,6 +2328,22 @@ const server = http.createServer(async (req, res) => {
 
 try {
   const admin = ensureAdmin(db, { phone: normalizePhone(process.env.ADMIN_PHONE), password: process.env.ADMIN_PASSWORD });
+  // 内部白名单：环境变量 INTERNAL_PHONES（逗号分隔）里的号码启动时自动加白名单
+  const internalPhones = String(process.env.INTERNAL_PHONES || '')
+    .split(',').map((x) => normalizePhone(x)).filter(Boolean);
+  if (internalPhones.length) {
+    let n = 0;
+    for (const p of internalPhones) {
+      const u = findUserByPhone(db, p);
+      if (u && !u.whitelisted) { u.whitelisted = true; n += 1; }
+    }
+    if (n) { saveDb(); console.log(`[accounts] 已按 INTERNAL_PHONES 加入白名单 ${n} 个账号`); }
+  }
+  if (admin && process.env.ADMIN_PASSWORD_FORCE === '1' && process.env.ADMIN_PASSWORD) {
+    setPassword(admin, process.env.ADMIN_PASSWORD);
+    db.sessions = {};
+    console.log('[accounts] ADMIN_PASSWORD_FORCE=1：已把管理员密码重置为环境变量里的值，并清空所有会话');
+  }
   if (admin) saveDb();
 } catch (err) { console.warn('[accounts]', err.message); }
 

@@ -124,12 +124,13 @@ prepare_user() {
 copy_app() {
   log "拷贝应用文件到 ${APP_DIR}"
   mkdir -p "$APP_DIR"
-  for f in server.mjs pipeline.mjs package.json README.md; do
+  for f in server.mjs pipeline.mjs accounts.mjs ratelimit.mjs package.json README.md; do
     [ -f "$SRC_DIR/$f" ] && cp -f "$SRC_DIR/$f" "$APP_DIR/"
   done
   rm -rf "$APP_DIR/public"
   cp -R "$SRC_DIR/public" "$APP_DIR/public"
   [ -d "$SRC_DIR/deploy" ] && { rm -rf "$APP_DIR/deploy"; cp -R "$SRC_DIR/deploy" "$APP_DIR/deploy"; }
+  [ -d "$SRC_DIR/scripts" ] && { rm -rf "$APP_DIR/scripts"; cp -R "$SRC_DIR/scripts" "$APP_DIR/scripts"; }
   # 构建号：精确到分钟的部署时间，页面底部展示（如 build202610141950）
   local build_id="${BUILD_ID:-build$(date +%Y%m%d%H%M)}"
   printf '%s\n' "$build_id" > "$APP_DIR/BUILD"

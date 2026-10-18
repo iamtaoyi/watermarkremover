@@ -1277,6 +1277,67 @@ if (el.adminBtn) {
       clearBusy(el.adminGen);
     }
   });
+  const pwSave = el.adminMask.querySelector('#pwSave');
+  const pwReset = el.adminMask.querySelector('#pwReset');
+  pwSave.addEventListener('click', async () => {
+    const oldPassword = el.adminMask.querySelector('#pwOld').value;
+    const newPassword = el.adminMask.querySelector('#pwNew').value;
+    if (!oldPassword || !newPassword) return toast('请填写当前密码和新密码');
+    try {
+      await jsonApi('/api/me/password', { method: 'POST', body: JSON.stringify({ oldPassword, newPassword }) });
+      el.adminMask.querySelector('#pwOld').value = '';
+      el.adminMask.querySelector('#pwNew').value = '';
+      toast('密码已修改，下次用新密码登录');
+    } catch (err) { toast(`修改失败：${err.message}`); }
+  });
+  pwReset.addEventListener('click', async () => {
+    const phone = el.adminMask.querySelector('#pwPhone').value.trim();
+    const newPassword = el.adminMask.querySelector('#pwTarget').value;
+    if (!phone || !newPassword) return toast('请填写手机号和新密码');
+    if (!window.confirm(`确定把 ${phone} 的密码重置为新的吗？`)) return;
+    try {
+      await jsonApi('/api/admin/reset-password', { method: 'POST', body: JSON.stringify({ phone, newPassword }) });
+      el.adminMask.querySelector('#pwPhone').value = '';
+      el.adminMask.querySelector('#pwTarget').value = '';
+      toast(`已重置 ${phone} 的密码`);
+    } catch (err) { toast(`重置失败：${err.message}`); }
+  });
+
+  // 反作弊：用户状态与处置
+  async function loadAbuse() {
+    const box = el.adminMask.querySelector('#abuseBox');
+    box.innerHTML = '<span class="admin-hint">加载中…</span>';
+    try {
+      const d = await jsonApi('/api/admin/abuse');
+      const rows = d.users.map((u) => {
+        const state = u.suspended ? '<span class="abuse-tag warn">已暂停</span>' : '<span class="abuse-tag ok">正常</span>';
+        const wl = u.whitelisted ? '<span class="abuse-tag ok">白名单</span>' : '';
+        const hits = u.rateHits ? ` <span class="abuse-tag warn">限流${u.rateHits}</span>` : '';
+        return `<div class="abuse-item"><b>${u.phone || u.id}</b> 积分 ${u.credits} ${state}${wl}${hits}
+          <button class="btn-text" data-act="whitelist" data-id="${u.id}">${u.whitelisted ? '取消白名单' : '加白名单'}</button>
+          <button class="btn-text" data-act="resume" data-id="${u.id}">解除</button>
+          <button class="btn-text" data-act="suspend" data-id="${u.id}">暂停</button></div>`;
+      }).join('');
+      const evs = (d.events || []).slice(0, 12).map((e) => `<div class="abuse-item"><b>${e.type}</b> ${e.path || e.key || ''} · ${(e.at || '').slice(5, 16).replace('T', ' ')}</div>`).join('');
+      box.innerHTML = `<div class="admin-label" style="margin:6px 0 2px">用户</div>${rows || '<span class="admin-hint">暂无用户</span>'}`
+        + `<div class="admin-label" style="margin:10px 0 2px">最近事件</div>${evs || '<span class="admin-hint">暂无事件</span>'}`;
+      box.querySelectorAll('button[data-act]').forEach((b) => {
+        b.addEventListener('click', async () => {
+          const action = b.dataset.act;
+          const reason = action === 'suspend' ? (window.prompt('暂停原因？') || '管理员手动暂停') : '';
+          try {
+            await jsonApi('/api/admin/abuse/action', { method: 'POST', body: JSON.stringify({ userId: b.dataset.id, action, reason }) });
+            toast(action === 'suspend' ? '已暂停' : action === 'resume' ? '已解除限制' : '白名单已更新');
+            loadAbuse();
+          } catch (err) { toast(`操作失败：${err.message}`); }
+        });
+      });
+    } catch (err) {
+      box.innerHTML = `<span class="admin-hint">加载失败：${err.message}</span>`;
+    }
+  }
+  el.adminMask.querySelector('#abuseReload').addEventListener('click', loadAbuse);
+
   el.adminCopy.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(el.adminCodes.value); toast('卡密已复制'); }
     catch { el.adminCodes.select(); toast('已选中，按 Ctrl/⌘+C 复制'); }

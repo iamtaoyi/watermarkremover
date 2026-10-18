@@ -650,3 +650,15 @@ main.container { padding-bottom: 64px; }
 .admin-codes { width: 100%; font-family: var(--mono, ui-monospace, monospace); font-size: 12.5px; line-height: 1.7;
   padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--soft); color: var(--ink);
   resize: vertical; }
+
+.admin-sep { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+.admin-row input[type=password], .admin-row input[type=tel] { width: 150px; }
+
+.abuse-box { max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; background: var(--soft); }
+.abuse-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px dashed var(--line); font-size: 12.5px; color: var(--ink-2); }
+.abuse-item:last-child { border-bottom: 0; }
+.abuse-item b { color: var(--ink); font-weight: 600; }
+.abuse-tag { font-size: 11px; padding: 2px 7px; border-radius: 999px; background: #e9edf3; color: var(--ink-2); }
+.abuse-tag.warn { background: #fff1e8; color: #b4530a; }
+.abuse-tag.ok { background: #e9f7ee; color: #12703a; }
+.abuse-item .btn-text { margin-left: auto; }

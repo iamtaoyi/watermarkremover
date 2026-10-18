@@ -167,3 +167,11 @@ export function ensureAdmin(db, { phone, password }) {
   }
   return user;
 }
+
+/** 重置/修改密码（写回 scrypt 哈希） */
+export function setPassword(user, password) {
+  if (!user) return false;
+  user.password = scrypt(password);
+  user.passwordChangedAt = nowIso();
+  return true;
+}

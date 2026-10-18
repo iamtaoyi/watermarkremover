@@ -154,6 +154,25 @@
         <textarea id="adminCodes" class="admin-codes" readonly rows="5" hidden></textarea>
         <div class="admin-row" id="adminCopyRow" hidden>
           <button class="btn btn-ghost" id="adminCopy" type="button">复制全部</button>
+        <hr class="admin-sep" />
+        <p class="admin-label">修改我的密码</p>
+        <div class="admin-row">
+          <input id="pwOld" type="password" placeholder="当前密码" autocomplete="current-password" />
+          <input id="pwNew" type="password" placeholder="新密码（≥6位）" autocomplete="new-password" />
+          <button class="btn btn-ghost" id="pwSave" type="button">保存</button>
+        </div>
+        <hr class="admin-sep" />
+        <p class="admin-label">重置他人密码</p>
+        <div class="admin-row">
+          <input id="pwPhone" type="tel" placeholder="对方手机号" />
+          <input id="pwTarget" type="password" placeholder="新密码（≥6位）" autocomplete="new-password" />
+          <button class="btn btn-ghost" id="pwReset" type="button">重置</button>
+        </div>
+        <hr class="admin-sep" />
+        <p class="admin-label">反作弊 / 用户状态
+          <button class="btn-text" id="abuseReload" type="button">刷新</button>
+        </p>
+        <div id="abuseBox" class="abuse-box"><span class="admin-hint">点「刷新」加载用户与事件</span></div>
         </div>
       </div>
     </div>
