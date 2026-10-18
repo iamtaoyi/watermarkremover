@@ -26,9 +26,17 @@
           <input id="passwordInput" name="password" type="password" placeholder="至少 6 位"
                  autocomplete="current-password" required />
         </label>
+        <label class="field" id="confirmField" hidden>
+          <span>确认密码</span>
+          <input id="confirmInput" name="confirm" type="password" placeholder="再输入一次" autocomplete="new-password" />
+        </label>
+        <label class="field" id="captchaField" hidden>
+          <span id="captchaQuestion">请输入验证码</span>
+          <input id="captchaInput" name="captcha" type="text" inputmode="numeric" placeholder="计算结果" autocomplete="off" />
+        </label>
       <p class="auth-error" id="authError" hidden></p>
-      <button class="btn btn-primary auth-submit" id="loginBtn" type="submit">登录</button>
-        <button class="btn btn-ghost auth-submit" id="registerBtn" type="button" style="margin-top:8px">没有账号？注册</button>
+        <button class="btn btn-primary auth-submit" id="loginBtn" type="submit">登录</button>
+        <button class="btn btn-ghost auth-submit" id="switchMode" type="button" style="margin-top:8px">没有账号？去注册</button>
         <p class="auth-hint">
           登录后 30 天内免重复登录；页头会显示积分余额。<br />
           处理视频按秒扣积分（1 秒 = 1 积分），可用卡密充值。

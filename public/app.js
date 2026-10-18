@@ -10,7 +10,7 @@
 const $ = (sel) => document.querySelector(sel);
 
 const el = {
-  authGate: $('#authGate'), authForm: $('#authForm'), phoneInput: $('#phoneInput'), passwordInput: $('#passwordInput'), registerBtn: $('#registerBtn'),
+  authGate: $('#authGate'), authForm: $('#authForm'), phoneInput: $('#phoneInput'), passwordInput: $('#passwordInput'), registerBtn: $('#registerBtn'), switchMode: $('#switchMode'), confirmField: $('#confirmField'), confirmInput: $('#confirmInput'), captchaField: $('#captchaField'), captchaQuestion: $('#captchaQuestion'), captchaInput: $('#captchaInput'),
   loginBtn: $('#loginBtn'), authError: $('#authError'), authSessionEnd: $('#authSessionEnd'),
   appShell: $('#appShell'), sessionLeft: $('#sessionLeft'), logoutBtn: $('#logoutBtn'), buildTag: $('#buildTag'),
   adminBtn: $('#adminBtn'), adminMask: $('#adminMask'), adminClose: $('#adminClose'),
@@ -301,7 +301,36 @@ async function md5BlobLazy(file, onProgress) {
   return md5Blob(file, { onProgress });
 }
 
-function acceptFiles(fileList) {
+async function acceptFiles(fileList) {
+  // 上传前积分预检（本地读时长，不发请求）：1 秒 = 1 积分
+  {
+    const probeFiles = [...(fileList || [])].filter(Boolean);
+    const me = state.session?.user;
+    const privileged = me && (me.role === 'admin' || me.whitelisted);
+    if (probeFiles.length && !privileged) {
+      const probe = (file) => new Promise((resolve) => {
+        try {
+          const url = URL.createObjectURL(file);
+          const v = document.createElement('video');
+          v.preload = 'metadata';
+          v.onloadedmetadata = () => { const d = Number(v.duration) || 0; URL.revokeObjectURL(url); resolve(d); };
+          v.onerror = () => { URL.revokeObjectURL(url); resolve(0); };
+          v.src = url;
+          setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} resolve(0); }, 4000);
+        } catch { resolve(0); }
+      });
+      const durations = await Promise.all(probeFiles.map(probe));
+      const need = durations.reduce((sum, d) => sum + Math.max(1, Math.ceil(d || 0)), 0);
+      const credits = me?.credits ?? 0;
+      if (credits <= 0 || need > credits) {
+        el.diskWarn.hidden = false;
+        el.diskWarn.textContent = `积分不足：这批视频预计需要 ${need} 积分，当前 ${credits} 积分。请先点页头「积分 · 充值」输入卡密后再上传。`;
+        toast(`积分不足：预计需要 ${need} 积分，当前 ${credits}`);
+        return;
+      }
+    }
+  }
+
   const files = [...(fileList || [])];
   if (!files.length) return;
   const max = state.config?.maxBatchSize || 30;
@@ -1172,62 +1201,71 @@ async function restore() {
 }
 
 /* ---------------------------------------------------------------- 事件 */
-el.authForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-    const phone = el.phoneInput.value.trim();
-    const password = el.passwordInput.value;
-  if (!phone || !password) return;
-  if (loginPending) return;              // 回车连按 / 连点 → 只发一次
-  markBusy(el.loginBtn, '正在验证…');
-  try {
-    await login(phone, password);
-    el.passwordInput.value = '';
-    showApp();
-  renderCredits();
-    await init();
-    refreshHeader();
-      renderCredits();
-  } catch (err) {
-    el.authError.textContent = err.message || '登录失败';
-    el.authError.hidden = false;
-  } finally {
-    clearBusy(el.loginBtn);
+  // 登录 / 注册 两个模式（默认登录）
+  let authMode = 'login';
+  let captchaCtx = null;
+  function setAuthMode(mode) {
+    authMode = mode;
+    const reg = mode === 'register';
+    if (el.confirmField) el.confirmField.hidden = !reg;
+    el.loginBtn.textContent = reg ? '注册' : '登录';
+    if (el.switchMode) el.switchMode.textContent = reg ? '已有账号？去登录' : '没有账号？去注册';
+    el.authError.hidden = true;
   }
-});
-  el.registerBtn.addEventListener('click', async () => {
+
+  async function submitAuth() {
     const phone = el.phoneInput.value.trim();
     const password = el.passwordInput.value;
     if (!phone || !password) {
-      el.authError.textContent = '请先填写手机号和密码';
+      el.authError.textContent = '请填写手机号和密码';
+      el.authError.hidden = false;
+      return;
+    }
+    if (authMode === 'register' && el.confirmInput.value !== password) {
+      el.authError.textContent = '两次输入的密码不一致';
       el.authError.hidden = false;
       return;
     }
     if (loginPending) return;
-    markBusy(el.registerBtn, '正在注册…');
+    markBusy(el.loginBtn, authMode === 'register' ? '正在注册…' : '正在登录…');
     try {
-      const res = await fetch('/api/auth/register', {
+      const body = { phone, password };
+      if (captchaCtx) { body.captchaId = captchaCtx.id; body.captchaAnswer = el.captchaInput.value.trim(); }
+      const res = await fetch(`/api/auth/${authMode}`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ phone, password }),
+        body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 428 && data.captcha) {
+        captchaCtx = data.captcha;
+        el.captchaField.hidden = false;
+        el.captchaQuestion.textContent = `验证码：${data.captcha.question}`;
+        el.captchaInput.value = '';
+        el.authError.textContent = '需要验证码，请输入计算结果';
+        el.authError.hidden = false;
+        return;
+      }
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      captchaCtx = null;
+      el.captchaField.hidden = true;
+      el.passwordInput.value = '';
+      if (el.confirmInput) el.confirmInput.value = '';
       sessionEndsAt = Date.parse(data.expiresAt);
       state.session = data;
-      el.passwordInput.value = '';
-      el.authError.hidden = true;
       showApp();
       await init();
       refreshHeader();
-      renderCredits();
-      toast('注册成功，已自动登录');
+      toast(authMode === 'register' ? '注册成功，已自动登录' : '登录成功');
     } catch (err) {
-      el.authError.textContent = err.message || '注册失败';
+      el.authError.textContent = err.message || '操作失败';
       el.authError.hidden = false;
     } finally {
-      clearBusy(el.registerBtn);
+      clearBusy(el.loginBtn);
     }
-  });
+  }
+  el.authForm.addEventListener('submit', (e) => { e.preventDefault(); submitAuth(); });
+  if (el.switchMode) el.switchMode.addEventListener('click', (e) => { e.preventDefault(); setAuthMode(authMode === 'login' ? 'register' : 'login'); });
 
   /** 页头积分徽标（点击输入卡密充值） */
   function renderCredits() {
@@ -1313,7 +1351,8 @@ if (el.adminBtn) {
         const state = u.suspended ? '<span class="abuse-tag warn">已暂停</span>' : '<span class="abuse-tag ok">正常</span>';
         const wl = u.whitelisted ? '<span class="abuse-tag ok">白名单</span>' : '';
         const hits = u.rateHits ? ` <span class="abuse-tag warn">限流${u.rateHits}</span>` : '';
-        return `<div class="abuse-item"><b>${u.phone || u.id}</b> 积分 ${u.credits} ${state}${wl}${hits}
+        const meta = [u.createdAt ? `注册 ${String(u.createdAt).slice(5, 10)}` : '', u.lastLoginAt ? `上次登录 ${String(u.lastLoginAt).slice(5, 16).replace('T', ' ')}` : '从未登录', u.charged ? `累计消费 ${u.charged}` : ''].filter(Boolean).join(' · ');
+        return `<div class="abuse-item"><b>${u.phone || u.id}</b> 积分 ${u.credits} ${state}${wl}${hits}<span class="h">${meta}</span>
           <button class="btn-text" data-act="whitelist" data-id="${u.id}">${u.whitelisted ? '取消白名单' : '加白名单'}</button>
           <button class="btn-text" data-act="resume" data-id="${u.id}">解除</button>
           <button class="btn-text" data-act="suspend" data-id="${u.id}">暂停</button></div>`;
@@ -1336,7 +1375,8 @@ if (el.adminBtn) {
       box.innerHTML = `<span class="admin-hint">加载失败：${err.message}</span>`;
     }
   }
-  el.adminMask.querySelector('#abuseReload').addEventListener('click', loadAbuse);
+  const abuseReloadBtn = el.adminMask.querySelector('#abuseReload');
+  if (abuseReloadBtn) abuseReloadBtn.addEventListener('click', loadAbuse);
 
   el.adminCopy.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(el.adminCodes.value); toast('卡密已复制'); }

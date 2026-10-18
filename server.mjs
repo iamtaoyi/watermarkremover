@@ -506,6 +506,23 @@ function refundTaskCredits(task, why = 'refund') {
   return amount;
 }
 
+// 登录/注册验证码：内存保存，5 分钟过期；同一 IP 失败达 3 次后强制要求
+const captchas = new Map();
+function issueCaptcha() {
+  const a = 2 + Math.floor(Math.random() * 8);
+  const b = 2 + Math.floor(Math.random() * 8);
+  const id = crypto.randomBytes(9).toString('base64url');
+  captchas.set(id, { answer: a + b, exp: Date.now() + 5 * 60 * 1000 });
+  if (captchas.size > 2000) for (const [k, v] of captchas) if (v.exp < Date.now()) captchas.delete(k);
+  return { id, question: `${a} + ${b} = ?` };
+}
+function checkCaptcha(id, answer) {
+  const c = captchas.get(String(id || ''));
+  if (!c || c.exp < Date.now()) return false;
+  captchas.delete(String(id));
+  return Number(answer) === c.answer;
+}
+
 function currentUser(req) {
   const s = currentSession(req);
   return s?.userId ? db.users[s.userId] || null : null;
@@ -1546,8 +1563,19 @@ const ROUTES = {
   },
 
   /* ---------------- 鉴权（无需登录即可访问的两个端点） ---------------- */
+  'GET /api/auth/captcha': async (req, res) => {
+    const ip = clientIp(req);
+    const need = loginBlocked(ip) > 0 || (loginFails.get(ip)?.count || 0) >= 3;
+    sendJson(res, 200, { required: need, ...(need ? issueCaptcha() : {}) });
+  },
+
   'POST /api/auth/register': async (req, res) => {
+    const ip = clientIp(req);
     const body = await readJsonBody(req);
+    const needCaptcha = (loginFails.get(ip)?.count || 0) >= 3;
+    if (needCaptcha && !checkCaptcha(body.captchaId, body.captchaAnswer)) {
+      return sendError(res, 428, '请输入验证码', { captchaRequired: true, captcha: issueCaptcha() });
+    }
     const phone = normalizePhone(body.phone);
     const password = String(body.password ?? '');
     if (!phone) return sendError(res, 400, '请输入正确的 11 位手机号');
@@ -1566,6 +1594,10 @@ const ROUTES = {
     const wait = loginBlocked(ip);
     if (wait) return sendError(res, 429, '尝试过于频繁，请 ' + wait + 's 后再试', { retryAfter: wait });
     const body = await readJsonBody(req);
+    const needCaptcha = (loginFails.get(ip)?.count || 0) >= 3;
+    if (needCaptcha && !checkCaptcha(body.captchaId, body.captchaAnswer)) {
+      return sendError(res, 428, '请输入验证码', { captchaRequired: true, captcha: issueCaptcha() });
+    }
     const phone = normalizePhone(body.phone);
     const password = String(body.password ?? '');
     if (!phone || !password) return sendError(res, 400, '请输入手机号和密码');
@@ -1632,6 +1664,40 @@ const ROUTES = {
     saveDb();
     console.log(`[admin] 重置了 ${phone.slice(0,3)}****${phone.slice(-4)} 的密码`);
     sendJson(res, 200, { ok: true });
+  },
+
+  /** 管理员：用户列表（含注册时间、最后登录、积分汇总） */
+  'GET /api/admin/users': async (req, res) => {
+    const admin = currentUser(req);
+    if (!admin || admin.role !== 'admin') return sendError(res, 403, '需要管理员权限');
+    const ledger = db.creditLedger || [];
+    const summarize = (uid) => {
+      let charged = 0, refunded = 0, redeemed = 0;
+      for (const e of ledger) {
+        if (e.userId !== uid) continue;
+        if (e.delta < 0) charged += -e.delta;
+        else if (String(e.reason).startsWith('refund')) refunded += e.delta;
+        else if (e.reason === 'redeem') redeemed += e.delta;
+      }
+      return { charged, refunded, redeemed, entries: ledger.filter((e) => e.userId === uid).length };
+    };
+    const users = Object.values(db.users).map((u) => ({
+      id: u.id, phone: u.phone, phoneMasked: publicUser(u).phone, credits: u.credits,
+      role: u.role, whitelisted: !!u.whitelisted, suspended: u.suspended || null,
+      rateHits: u.rateHits || 0, createdAt: u.createdAt, lastLoginAt: u.lastLoginAt || null,
+      ...summarize(u.id),
+    })).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    sendJson(res, 200, { users, total: users.length });
+  },
+
+  /** 管理员：某个用户的积分流水（最近 100 条） */
+  'GET /api/admin/users/:id/ledger': async (req, res, { params }) => {
+    const admin = currentUser(req);
+    if (!admin || admin.role !== 'admin') return sendError(res, 403, '需要管理员权限');
+    const user = db.users[params.id];
+    if (!user) return sendError(res, 404, '用户不存在');
+    const entries = (db.creditLedger || []).filter((e) => e.userId === user.id).slice(-100).reverse();
+    sendJson(res, 200, { user: { id: user.id, phone: publicUser(user).phone, credits: user.credits }, entries });
   },
 
   /** 管理员：反作弊事件与用户风险状态 */
@@ -1786,6 +1852,17 @@ const ROUTES = {
       });
     }
 
+        // 积分预检：按秒估算（1 秒 = 1 积分），不够直接拒绝，避免白跑
+    {
+      const me = currentUser(req);
+      if (me && me.role !== 'admin' && !me.whitelisted) {
+        const dur = body.durations || {};
+        const need = (body.fileIds || []).reduce((sum, fid) => sum + Math.max(1, Math.ceil(Number(dur[fid]) || 0)), 0);
+        if (need > 0 && (me.credits || 0) < need) {
+          return sendError(res, 402, `积分不足：预计需要 ${need} 积分，当前 ${me.credits || 0}，请先充值`, { need, have: me.credits || 0 });
+        }
+      }
+    }
     const batch = createBatch({
     userId: currentUser(req)?.id || null, fileIds, operation, durations: body.durations || {}, erasePreset: body.erasePreset, eraseRegion: body.eraseRegion, eraseMode: body.eraseMode, modelVersion: body.modelVersion });
     sendJson(res, 202, { ...serializeBatch(batch), poll: `/api/batches/${batch.id}` });
@@ -2226,6 +2303,7 @@ function matchRoute(method, pathname) {
 
 /** 无需登录即可访问的接口（登录本身，以及让未登录页面判断会话状态） */
 const PUBLIC_ROUTES = new Set([
+  'GET /api/auth/captcha',
   'POST /api/auth/login',
   'POST /api/auth/register',
   'GET /api/auth/session',
