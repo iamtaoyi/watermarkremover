@@ -45,6 +45,7 @@
         </a>
         <div class="header-right">
           <span class="session-note"><span class="dot"></span>会话剩余 <b class="mono" id="sessionLeft">--:--:--</b></span>
+            <button class="btn-text" id="adminBtn" type="button" hidden>后台</button>
           <button class="btn-text" id="logoutBtn" type="button">退出登录</button>
         </div>
       </div>
@@ -136,5 +137,26 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="/app.js" type="module"></script>
+  <div class="admin-mask" id="adminMask" hidden>
+    <div class="admin-panel" role="dialog" aria-modal="true" aria-labelledby="adminTitle">
+      <div class="admin-head">
+        <h2 id="adminTitle">后台管理</h2>
+        <button class="btn-text" id="adminClose" type="button">关闭</button>
+      </div>
+      <div class="admin-body">
+        <p class="admin-label">生成卡密</p>
+        <div class="admin-row">
+          <label>数量 <input id="adminCount" type="number" min="1" max="200" value="1" /></label>
+          <label>每张积分 <input id="adminCredits" type="number" min="1" value="100" /></label>
+          <button class="btn btn-primary" id="adminGen" type="button">生成</button>
+        </div>
+        <p class="admin-hint" id="adminHint">生成后把卡密发给用户，用户在页头「充值」里输入即可到账。</p>
+        <textarea id="adminCodes" class="admin-codes" readonly rows="5" hidden></textarea>
+        <div class="admin-row" id="adminCopyRow" hidden>
+          <button class="btn btn-ghost" id="adminCopy" type="button">复制全部</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

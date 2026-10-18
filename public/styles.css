@@ -631,3 +631,22 @@ main.container { padding-bottom: 64px; }
 .credits-badge { font-size: 12.5px; color: var(--ink-2); background: var(--soft); border: 1px solid var(--line);
   border-radius: 999px; padding: 5px 12px; cursor: pointer; white-space: nowrap; transition: background .15s; }
 .credits-badge:hover { background: #eef1f5; }
+
+/* 后台管理面板 */
+.admin-mask { position: fixed; inset: 0; background: rgba(15,17,21,.42); display: flex; align-items: center;
+  justify-content: center; z-index: 60; padding: 24px; }
+.admin-mask[hidden] { display: none; }
+.admin-panel { width: 100%; max-width: 520px; background: var(--card); border-radius: 18px; padding: 20px 22px;
+  box-shadow: 0 24px 60px rgba(15,17,21,.22); }
+.admin-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.admin-head h2 { font-size: 16px; margin: 0; color: var(--ink); }
+.admin-body { display: flex; flex-direction: column; gap: 12px; }
+.admin-label { font-size: 13px; font-weight: 600; color: var(--ink); margin: 0; }
+.admin-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); }
+.admin-row label { display: flex; align-items: center; gap: 6px; }
+.admin-row input { width: 88px; font-family: inherit; font-size: 13px; padding: 7px 10px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--soft); color: var(--ink); }
+.admin-hint { font-size: 12.5px; color: var(--ink-3); margin: 0; }
+.admin-codes { width: 100%; font-family: var(--mono, ui-monospace, monospace); font-size: 12.5px; line-height: 1.7;
+  padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--soft); color: var(--ink);
+  resize: vertical; }

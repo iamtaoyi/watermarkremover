@@ -1617,6 +1617,7 @@ const ROUTES = {
     }
     sendJson(res, 200, {
       authenticated: true,
+      user: publicUser(session.userId ? db.users[session.userId] : null),
       expiresAt: new Date(session.expiresAt).toISOString(),
       sessionEndMinutes: SESSION_END_MINUTE,
       createdAt: session.createdAt,

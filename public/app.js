@@ -13,6 +13,9 @@ const el = {
   authGate: $('#authGate'), authForm: $('#authForm'), phoneInput: $('#phoneInput'), passwordInput: $('#passwordInput'), registerBtn: $('#registerBtn'),
   loginBtn: $('#loginBtn'), authError: $('#authError'), authSessionEnd: $('#authSessionEnd'),
   appShell: $('#appShell'), sessionLeft: $('#sessionLeft'), logoutBtn: $('#logoutBtn'), buildTag: $('#buildTag'),
+  adminBtn: $('#adminBtn'), adminMask: $('#adminMask'), adminClose: $('#adminClose'),
+  adminCount: $('#adminCount'), adminCredits: $('#adminCredits'), adminGen: $('#adminGen'),
+  adminCodes: $('#adminCodes'), adminCopy: $('#adminCopy'), adminCopyRow: $('#adminCopyRow'), adminHint: $('#adminHint'),
   uploadCard: $('#uploadCard'), dropzone: $('#dropzone'), fileInput: $('#fileInput'),
   dropHint: $('#dropHint'), quota: $('#quota'),
   erasePreset: $('#erasePreset'), eraseHint: $('#eraseHint'),
@@ -213,6 +216,7 @@ async function bootstrap() {
       sessionEndsAt = Date.parse(data.expiresAt);
       showApp();
       await init();
+      refreshHeader();
     } else {
       if (data.endAt) {
         el.authSessionEnd.textContent = new Date(data.endAt).toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit' });
@@ -1181,6 +1185,7 @@ el.authForm.addEventListener('submit', async (e) => {
     showApp();
   renderCredits();
     await init();
+    refreshHeader();
       renderCredits();
   } catch (err) {
     el.authError.textContent = err.message || '登录失败';
@@ -1213,6 +1218,7 @@ el.authForm.addEventListener('submit', async (e) => {
       el.authError.hidden = true;
       showApp();
       await init();
+      refreshHeader();
       renderCredits();
       toast('注册成功，已自动登录');
     } catch (err) {
@@ -1245,8 +1251,37 @@ el.authForm.addEventListener('submit', async (e) => {
       });
     }
     badge.textContent = `积分 ${u.credits} · 充值`;
+  if (el.adminBtn) el.adminBtn.hidden = u.role !== 'admin';
     badge.title = '点击输入卡密充值';
   }
+
+
+// 后台：生成卡密
+if (el.adminBtn) {
+  el.adminBtn.addEventListener('click', () => { el.adminMask.hidden = false; });
+  el.adminClose.addEventListener('click', () => { el.adminMask.hidden = true; });
+  el.adminMask.addEventListener('click', (e) => { if (e.target === el.adminMask) el.adminMask.hidden = true; });
+  el.adminGen.addEventListener('click', async () => {
+    const count = Math.max(1, Math.min(200, Number(el.adminCount.value) || 1));
+    const credits = Math.max(1, Number(el.adminCredits.value) || 0);
+    if (!markBusy(el.adminGen, '生成中…')) return;
+    try {
+      const res = await jsonApi('/api/admin/codes', { method: 'POST', body: JSON.stringify({ count, credits }) });
+      el.adminCodes.value = res.codes.join('\n');
+      el.adminCodes.hidden = false;
+      el.adminCopyRow.hidden = false;
+      el.adminHint.textContent = `已生成 ${res.codes.length} 张，每张 ${credits} 积分`;
+    } catch (err) {
+      toast(`生成失败：${err.message}`);
+    } finally {
+      clearBusy(el.adminGen);
+    }
+  });
+  el.adminCopy.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(el.adminCodes.value); toast('卡密已复制'); }
+    catch { el.adminCodes.select(); toast('已选中，按 Ctrl/⌘+C 复制'); }
+  });
+}
 
 
 el.logoutBtn.addEventListener('click', async () => {
@@ -1292,3 +1327,43 @@ document.addEventListener('paste', (e) => {
 });
 
 bootstrap();
+
+/* ---------------------------------------------------------------- 页头同步
+ * 独立于登录流程：登录后 / 刷新后 / 每 10 秒，从服务端取一次会话里的用户，
+ * 保证「积分徽标」和「后台」入口始终正确显示（管理员才看得到后台）。
+ */
+async function redeemPrompt() {
+  const code = window.prompt('输入卡密（形如 WM-XXXX-XXXX-XXXX-XXXX）');
+  if (!code) return;
+  try {
+    const r = await jsonApi('/api/credits/redeem', { method: 'POST', body: JSON.stringify({ code }) });
+    toast(`充值成功 +${r.credits} 积分，余额 ${r.balance}`);
+    refreshHeader();
+  } catch (err) { toast(`充值失败：${err.message}`); }
+}
+
+async function refreshHeader() {
+  try {
+    const res = await fetch('/api/auth/session', { credentials: 'same-origin' });
+    const d = await res.json();
+    if (!d.authenticated) { if (el.adminBtn) el.adminBtn.hidden = true; return; }
+    state.session = d;
+    const u = d.user;
+    if (!u) return;
+    let badge = document.getElementById('creditsBadge');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.id = 'creditsBadge';
+      badge.className = 'credits-badge';
+      badge.title = '点击输入卡密充值';
+      el.logoutBtn.parentNode.insertBefore(badge, el.logoutBtn);
+      badge.addEventListener('click', redeemPrompt);
+    }
+    badge.textContent = `积分 ${u.credits} · 充值`;
+    if (el.adminBtn) el.adminBtn.hidden = u.role !== 'admin';
+  } catch { /* 忽略 */ }
+}
+
+refreshHeader();
+setTimeout(refreshHeader, 1200);
+setInterval(refreshHeader, 10000);
