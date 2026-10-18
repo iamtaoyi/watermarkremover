@@ -1304,7 +1304,44 @@ async function restore() {
 
 // 后台：生成卡密
 if (el.adminBtn) {
-  el.adminBtn.addEventListener('click', () => { el.adminMask.hidden = false; });
+  // —— 页签切换 ——
+  let adminTab = 'codes';
+  function showAdminTab(tab) {
+    adminTab = tab;
+    el.adminMask.querySelectorAll('.admin-tab').forEach((b) => b.classList.toggle('is-active', b.dataset.tab === tab));
+    el.adminMask.querySelectorAll('[data-pane]').forEach((p) => { p.hidden = p.dataset.pane !== tab; });
+    if (tab === 'codes') loadCodes();
+  }
+  el.adminMask.querySelectorAll('.admin-tab').forEach((b) => {
+    b.addEventListener('click', () => showAdminTab(b.dataset.tab));
+  });
+
+  // —— 卡密记录 ——
+  async function loadCodes() {
+    const box = el.adminMask.querySelector('#codesList');
+    const sum = el.adminMask.querySelector('#codesSummary');
+    const filter = el.adminMask.querySelector('#codeFilter').value;
+    sum.textContent = '加载中…';
+    try {
+      const d = await jsonApi(`/api/admin/codes?status=${filter}`);
+      sum.textContent = `共 ${d.total} 张（已兑换 ${d.used} / 未兑换 ${d.unused}）· 累计发放 ${d.creditsIssued} 积分 · 已兑换 ${d.creditsRedeemed} 积分`;
+      if (!d.codes.length) { box.innerHTML = '<span class="admin-hint">没有符合条件的卡密</span>'; return; }
+      box.innerHTML = d.codes.map((c) => {
+        const state = c.usedAt
+          ? `<span class="abuse-tag warn">已兑换</span> ${c.usedBy || ''} · ${String(c.usedAt).slice(5, 16).replace('T', ' ')}`
+          : '<span class="abuse-tag ok">未兑换</span>';
+        return `<div class="abuse-item admin-code-row"><span class="mono">${c.code}</span>`
+          + `<span class="abuse-tag">${c.credits} 积分</span>`
+          + `<span class="admin-hint" style="flex:1">${state}</span>`
+          + `<span class="admin-hint">${String(c.createdAt || '').slice(5, 10)}</span></div>`;
+      }).join('');
+    } catch (err) {
+      sum.textContent = `加载失败：${err.message}`;
+    }
+  }
+  el.adminMask.querySelector('#codeFilter').addEventListener('change', loadCodes);
+
+  el.adminBtn.addEventListener('click', () => { el.adminMask.hidden = false; showAdminTab('codes'); });
   el.adminClose.addEventListener('click', () => { el.adminMask.hidden = true; });
   el.adminMask.addEventListener('click', (e) => { if (e.target === el.adminMask) el.adminMask.hidden = true; });
   el.adminGen.addEventListener('click', async () => {
@@ -1317,6 +1354,7 @@ if (el.adminBtn) {
       el.adminCodes.hidden = false;
       el.adminCopyRow.hidden = false;
       el.adminHint.textContent = `已生成 ${res.codes.length} 张，每张 ${credits} 积分`;
+      loadCodes();
     } catch (err) {
       toast(`生成失败：${err.message}`);
     } finally {

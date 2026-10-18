@@ -1731,6 +1731,25 @@ const ROUTES = {
     saveDb();
     sendJson(res, 200, { ok: true, user: { id: target.id, phone: target.phone, whitelisted: !!target.whitelisted, suspended: target.suspended || null } });
   },
+  /** 管理员：卡密列表（含兑换记录，可按状态筛选） */
+  'GET /api/admin/codes': async (req, res) => {
+    const admin = currentUser(req);
+    if (!admin || admin.role !== 'admin') return sendError(res, 403, '需要管理员权限');
+    const status = String(new URL(req.url, 'http://x').searchParams.get('status') || 'all');
+    const all = Object.values(db.redemptionCodes || {});
+    const phoneOf = (uid) => (uid && db.users[uid] ? db.users[uid].phone : null);
+    const rows = all.map((c) => ({
+      code: c.code, credits: c.credits, createdAt: c.createdAt, createdBy: phoneOf(c.createdBy),
+      usedById: c.usedBy || null, usedBy: phoneOf(c.usedBy), usedAt: c.usedAt || null,
+    }))
+      .filter((r) => (status === 'used' ? r.usedAt : status === 'unused' ? !r.usedAt : true))
+      .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    sendJson(res, 200, { codes: rows, total: all.length, used: all.filter((c) => c.usedAt).length,
+      unused: all.filter((c) => !c.usedAt).length,
+      creditsIssued: all.reduce((n, c) => n + (c.credits || 0), 0),
+      creditsRedeemed: all.filter((c) => c.usedAt).reduce((n, c) => n + (c.credits || 0), 0) });
+  },
+
 
   'POST /api/admin/codes': async (req, res) => {
     const user = currentUser(req);
