@@ -151,7 +151,8 @@ async function api(path, opts = {}) {
 async function jsonApi(path, opts) {
   const res = await api(path, opts);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { status: res.status, data });
+    if (res.status === 401) { showLogin('登录已过期，请重新登录'); }
+    if (!res.ok) throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { status: res.status, data });
   return data;
 }
 

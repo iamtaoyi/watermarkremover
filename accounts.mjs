@@ -7,7 +7,7 @@
  */
 import crypto from 'node:crypto';
 
-const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;   // 手机号+密码登录：30 天
+const SESSION_TTL_MS = 60 * 60 * 1000;          // 每次调用接口都会续期，最后一次调用后 1 小时失效
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';  // 去掉易混字符
 
 const nowIso = () => new Date().toISOString();
@@ -173,5 +173,16 @@ export function setPassword(user, password) {
   if (!user) return false;
   user.password = scrypt(password);
   user.passwordChangedAt = nowIso();
+  return true;
+}
+
+/** 会话续期：每次接口调用把有效期推到「现在 + 1 小时」（节流：每分钟最多写一次） */
+export function touchSession(db, sid) {
+  const s = db.sessions?.[sid];
+  if (!s) return false;
+  const now = Date.now();
+  if ((s.expiresAt || 0) - now > SESSION_TTL_MS - 60 * 1000) return false;  // 上次刚续过，跳过
+  s.expiresAt = now + SESSION_TTL_MS;
+  s.touchedAt = new Date().toISOString();
   return true;
 }

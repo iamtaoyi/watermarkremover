@@ -18,7 +18,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
-import { normalizePhone, findUserByPhone, createUser, checkPassword, publicUser, createUserSession, chargeSeconds, refundSeconds, createCodes, redeemCode, ensureAdmin, setPassword } from './accounts.mjs';
+import { normalizePhone, findUserByPhone, createUser, checkPassword, publicUser, createUserSession, chargeSeconds, refundSeconds, createCodes, redeemCode, ensureAdmin, setPassword, touchSession } from './accounts.mjs';
 import { take as takeToken, stats as rateStats } from './ratelimit.mjs';
 import { fileURLToPath } from 'node:url';
 import {
@@ -493,6 +493,8 @@ function currentSession(req) {
     saveDb();
     return null;
   }
+  // 活跃即续期：接口被调用一次，有效期就推到「现在 + 1 小时」
+  if (touchSession(db, sid)) saveDb();
   return { sid, ...session };
 }
 
