@@ -1731,6 +1731,21 @@ const ROUTES = {
     saveDb();
     sendJson(res, 200, { ok: true, user: { id: target.id, phone: target.phone, whitelisted: !!target.whitelisted, suspended: target.suspended || null } });
   },
+  /** 管理员：删除卡密（已兑换的不可删，保兑换记录） */
+  'DELETE /api/admin/codes/:code': async (req, res, { params }) => {
+    const admin = currentUser(req);
+    if (!admin || admin.role !== 'admin') return sendError(res, 403, '需要管理员权限');
+    const code = String(params.code || '').toUpperCase();
+    const rec = db.redemptionCodes?.[code];
+    if (!rec) return sendError(res, 404, '卡密不存在或已删除');
+    if (rec.usedBy) return sendError(res, 409, '该卡密已被兑换，删除会丢失兑换记录，已拒绝');
+    delete db.redemptionCodes[code];
+    db.abuseEvents.push({ id: `ab_${Date.now().toString(36)}`, type: 'admin:delete-code', code, by: admin.id, at: new Date().toISOString() });
+    saveDb();
+    console.log(`[admin] 删除卡密 ${code}`);
+    sendJson(res, 200, { ok: true, code });
+  },
+
   /** 管理员：卡密列表（含兑换记录，可按状态筛选） */
   'GET /api/admin/codes': async (req, res) => {
     const admin = currentUser(req);

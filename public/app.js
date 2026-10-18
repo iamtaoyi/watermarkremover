@@ -1333,8 +1333,23 @@ if (el.adminBtn) {
         return `<div class="abuse-item admin-code-row"><span class="mono">${c.code}</span>`
           + `<span class="abuse-tag">${c.credits} 积分</span>`
           + `<span class="admin-hint" style="flex:1">${state}</span>`
-          + `<span class="admin-hint">${String(c.createdAt || '').slice(5, 10)}</span></div>`;
+          + `<span class="admin-hint">${String(c.createdAt || '').slice(5, 10)}</span>`
+          + (c.usedAt
+              ? `<span class="admin-hint" title="已兑换的卡密不可删除">—</span>`
+              : `<button class="btn-text" data-del="${c.code}" type="button">删除</button>`)
+          + `</div>`;
       }).join('');
+      box.querySelectorAll('button[data-del]').forEach((b) => {
+        b.addEventListener('click', async () => {
+          const code = b.dataset.del;
+          if (!window.confirm(`确定删除卡密 ${code} 吗？`)) return;
+          try {
+            await jsonApi(`/api/admin/codes/${encodeURIComponent(code)}`, { method: 'DELETE' });
+            toast('已删除');
+            loadCodes();
+          } catch (err) { toast(`删除失败：${err.message}`); }
+        });
+      });
     } catch (err) {
       sum.textContent = `加载失败：${err.message}`;
     }
