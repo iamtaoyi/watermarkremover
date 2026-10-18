@@ -10,7 +10,7 @@
 const $ = (sel) => document.querySelector(sel);
 
 const el = {
-  authGate: $('#authGate'), authForm: $('#authForm'), tokenInput: $('#tokenInput'),
+  authGate: $('#authGate'), authForm: $('#authForm'), phoneInput: $('#phoneInput'), passwordInput: $('#passwordInput'), registerBtn: $('#registerBtn'),
   loginBtn: $('#loginBtn'), authError: $('#authError'), authSessionEnd: $('#authSessionEnd'),
   appShell: $('#appShell'), sessionLeft: $('#sessionLeft'), logoutBtn: $('#logoutBtn'), buildTag: $('#buildTag'),
   uploadCard: $('#uploadCard'), dropzone: $('#dropzone'), fileInput: $('#fileInput'),
@@ -182,14 +182,14 @@ function startTicker() {
   }, 1000);
 }
 
-async function login(token) {
+async function login(phone, password) {
   loginPending = true;
   el.loginBtn.disabled = true;
   try {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify({ phone, password }),
       credentials: 'same-origin',
     });
     const data = await res.json().catch(() => ({}));
@@ -937,7 +937,12 @@ async function startTask(r) {
   const btn = rowActionButton(r, /开始任务|提交中/);
   if (!markBusy(btn, '提交中…')) return;          // 已经在提交 → 直接忽略
   try {
-    await jsonApi(`/api/tasks/${r.taskId}/start`, { method: 'POST', body: JSON.stringify({}) });
+    try {
+      await jsonApi(`/api/tasks/${r.taskId}/start`, { method: 'POST', body: JSON.stringify({}) });
+    } catch (err) {
+      toast(err.message || '开始失败');
+      throw err;
+    }
     toast(`已开始：${r.fileName}`);
     startPolling();
   } catch (err) {
@@ -1165,15 +1170,18 @@ async function restore() {
 /* ---------------------------------------------------------------- 事件 */
 el.authForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const token = el.tokenInput.value.trim();
-  if (!token) return;
+    const phone = el.phoneInput.value.trim();
+    const password = el.passwordInput.value;
+  if (!phone || !password) return;
   if (loginPending) return;              // 回车连按 / 连点 → 只发一次
   markBusy(el.loginBtn, '正在验证…');
   try {
-    await login(token);
-    el.tokenInput.value = '';
+    await login(phone, password);
+    el.passwordInput.value = '';
     showApp();
+  renderCredits();
     await init();
+      renderCredits();
   } catch (err) {
     el.authError.textContent = err.message || '登录失败';
     el.authError.hidden = false;
@@ -1181,6 +1189,66 @@ el.authForm.addEventListener('submit', async (e) => {
     clearBusy(el.loginBtn);
   }
 });
+  el.registerBtn.addEventListener('click', async () => {
+    const phone = el.phoneInput.value.trim();
+    const password = el.passwordInput.value;
+    if (!phone || !password) {
+      el.authError.textContent = '请先填写手机号和密码';
+      el.authError.hidden = false;
+      return;
+    }
+    if (loginPending) return;
+    markBusy(el.registerBtn, '正在注册…');
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      sessionEndsAt = Date.parse(data.expiresAt);
+      state.session = data;
+      el.passwordInput.value = '';
+      el.authError.hidden = true;
+      showApp();
+      await init();
+      renderCredits();
+      toast('注册成功，已自动登录');
+    } catch (err) {
+      el.authError.textContent = err.message || '注册失败';
+      el.authError.hidden = false;
+    } finally {
+      clearBusy(el.registerBtn);
+    }
+  });
+
+  /** 页头积分徽标（点击输入卡密充值） */
+  function renderCredits() {
+    const u = state.session?.user;
+    if (!u) return;
+    let badge = document.getElementById('creditsBadge');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.id = 'creditsBadge';
+      badge.className = 'credits-badge';
+      el.logoutBtn.parentNode.insertBefore(badge, el.logoutBtn);
+      badge.addEventListener('click', async () => {
+        const code = window.prompt('输入卡密（形如 WM-XXXX-XXXX-XXXX-XXXX）');
+        if (!code) return;
+        try {
+          const r = await jsonApi('/api/credits/redeem', { method: 'POST', body: JSON.stringify({ code }) });
+          state.session.user = r.user;
+          renderCredits();
+          toast(`充值成功 +${r.credits} 积分，余额 ${r.balance}`);
+        } catch (err) { toast(`充值失败：${err.message}`); }
+      });
+    }
+    badge.textContent = `积分 ${u.credits} · 充值`;
+    badge.title = '点击输入卡密充值';
+  }
+
+
 el.logoutBtn.addEventListener('click', async () => {
   if (!markBusy(el.logoutBtn, '正在退出…')) return;
   try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch { /* 忽略 */ }

@@ -18,6 +18,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
+import { normalizePhone, findUserByPhone, createUser, checkPassword, publicUser, createUserSession, chargeSeconds, refundSeconds, createCodes, redeemCode, ensureAdmin } from './accounts.mjs';
 import { fileURLToPath } from 'node:url';
 import {
   OPERATIONS,
@@ -291,6 +292,9 @@ db.tasks ||= {};
 db.batches ||= {};
 db.results ||= {};      // md5 → 已完成产物（内容级复用索引）
 db.sessions ||= {};
+db.users ||= {};
+db.creditLedger ||= [];
+db.redemptionCodes ||= {};
 // MD5 → fileId 索引（去重的唯一依据，文件名即 MD5）；旧记录没有 md5 字段，顺手补建索引
 db.md5Index ||= {};
 for (const f of Object.values(db.files)) {
@@ -488,6 +492,21 @@ function currentSession(req) {
     return null;
   }
   return { sid, ...session };
+}
+
+function refundTaskCredits(task, why = 'refund') {
+  if (!task || !task.chargedCredits) return 0;
+  const user = task.userId ? db.users[task.userId] : null;
+  if (user) refundSeconds(db, user, task.chargedCredits, task.id, why);
+  const amount = task.chargedCredits;
+  task.chargedCredits = 0;
+  console.log(`[credits] 退还 ${amount} 积分（${why}，task ${task.id}）`);
+  return amount;
+}
+
+function currentUser(req) {
+  const s = currentSession(req);
+  return s?.userId ? db.users[s.userId] || null : null;
 }
 
 function createSession(req) {
@@ -1083,6 +1102,7 @@ async function execute(task) {
       `[worker] ${task.id} 去字幕完成，用时 ${outcome.durationMs}ms，产物 ${formatBytes(kept ? stat.size : (outcome.size || 0))}${kept ? '' : '（云端保存，未落盘）'}`,
     );
   } catch (err) {
+    if (task.status !== 'canceled') refundTaskCredits(task, 'refund:failed');
     task.status = err.code === 'CANCELED' ? 'canceled' : 'failed';
     task.stage = err.code === 'CANCELED' ? '已取消' : '处理失败';
     task.error = err.code === 'CANCELED' ? null : err.message || '未知错误';
@@ -1106,6 +1126,7 @@ async function cancelTasks(tasks) {
     }
   }));
   const summary = { remoteOk: 0, remoteFailed: 0, noRemote: 0, notes: [] };
+  for (const t of list) refundTaskCredits(t, 'refund:cancel');
   for (const t of list) {
     if (t.remoteCancel?.ok) summary.remoteOk += 1;
     else if (t.remoteCancel?.attempted) { summary.remoteFailed += 1; if (!summary.notes.includes(t.remoteCancel.note)) summary.notes.push(t.remoteCancel.note); }
@@ -1171,7 +1192,7 @@ function freeDiskBytes(dir = DATA_DIR) {
  * 建一条任务记录（不排队）。批次里的每个「唯一内容」都走这里，
  * 单文件接口也复用，保证两种入口的字段一致。
  */
-function createTaskForFile(file, { operation = DEFAULT_OPERATION, durationSec, eraseRegion, eraseMode, modelVersion } = {}) {
+function createTaskForFile(file, { operation = DEFAULT_OPERATION, durationSec, userId, eraseRegion, eraseMode, modelVersion } = {}) {
   const dur = Number(durationSec);
   const hasDuration = Number.isFinite(dur) && dur > 0.5 && dur < 6 * 3600;
   const mode = resolveEraseMode(eraseMode || OPERATIONS[operation]?.mode || 'Subtitle');
@@ -1188,6 +1209,7 @@ function createTaskForFile(file, { operation = DEFAULT_OPERATION, durationSec, e
     fileId: file.id,
     fileName: file.name,
     fileSize: file.size,
+    userId: userId || null,
     operation,
     operationLabel: OPERATIONS[operation].label,
     mode,                                        // Subtitle | Text
@@ -1326,7 +1348,7 @@ function appendFilesToBatch(batch, fileIds, durations = {}, overrides = {}) {
       model: overrides.modelVersion,
     });
     const task = createTaskForFile(file, {
-      operation: batch.operation, durationSec: durations[fid],
+      operation: batch.operation, durationSec: durations[fid], userId: batch.userId || null,
       eraseRegion: eff.region, eraseMode: eff.mode, modelVersion: eff.model,
     });
     task.erasePreset = eff.preset;
@@ -1339,13 +1361,14 @@ function appendFilesToBatch(batch, fileIds, durations = {}, overrides = {}) {
   return added;
 }
 
-function createBatch({ fileIds, operation = DEFAULT_OPERATION, durations = {}, erasePreset = 'standard', eraseRegion, eraseMode, modelVersion } = {}) {
+function createBatch({ fileIds, operation = DEFAULT_OPERATION, durations = {}, userId, erasePreset = 'standard', eraseRegion, eraseMode, modelVersion } = {}) {
   db.batches ||= {};
   const batch = {
     id: id('batch'),
     createdAt: new Date().toISOString(),
     operation,
     erasePreset: resolveErasePreset(erasePreset),
+    userId: userId || null,
     taskIds: [],
     items: [],
   };
@@ -1521,24 +1544,66 @@ const ROUTES = {
   },
 
   /* ---------------- 鉴权（无需登录即可访问的两个端点） ---------------- */
+  'POST /api/auth/register': async (req, res) => {
+    const body = await readJsonBody(req);
+    const phone = normalizePhone(body.phone);
+    const password = String(body.password ?? '');
+    if (!phone) return sendError(res, 400, '请输入正确的 11 位手机号');
+    if (password.length < 6) return sendError(res, 400, '密码至少 6 位');
+    if (findUserByPhone(db, phone)) return sendError(res, 409, '该手机号已注册，请直接登录');
+    const user = createUser(db, { phone, password, welcomeCredits: Math.max(0, Number(process.env.WELCOME_CREDITS ?? 0)) });
+    const { sid, expiresAt } = createUserSession(db, user.id);
+    setSessionCookie(req, res, sid, (expiresAt - Date.now()) / 1000);
+    saveDb();
+    console.log('[auth] 注册 ' + phone.slice(0,3) + '****' + phone.slice(-4));
+    sendJson(res, 201, { authenticated: true, user: publicUser(user), expiresAt: new Date(expiresAt).toISOString() });
+  },
+
   'POST /api/auth/login': async (req, res) => {
     const ip = clientIp(req);
     const wait = loginBlocked(ip);
-    if (wait) return sendError(res, 429, `登录尝试过于频繁，请 ${wait}s 后再试`, { retryAfter: wait });
+    if (wait) return sendError(res, 429, '尝试过于频繁，请 ' + wait + 's 后再试', { retryAfter: wait });
     const body = await readJsonBody(req);
-    const token = String(body.token ?? '').trim();
-    if (!token) return sendError(res, 400, '请输入访问 Token');
-    if (!tokenMatches(token)) {
-      const rec = noteLoginFail(ip);
-      console.warn(`[auth] 登录失败（${ip}）第 ${rec.count} 次`);
-      return sendError(res, 401, 'Token 不正确', { remaining: Math.max(0, LOGIN_MAX_FAILS - rec.count) });
-    }
+    const phone = normalizePhone(body.phone);
+    const password = String(body.password ?? '');
+    if (!phone || !password) return sendError(res, 400, '请输入手机号和密码');
+    const user = findUserByPhone(db, phone);
+    if (!user || !checkPassword(user, password)) { noteLoginFail(ip); return sendError(res, 401, '手机号或密码不正确'); }
+    if (user.status !== 'active') return sendError(res, 403, '账号已被停用');
     loginFails.delete(ip);
-    const { sid, expiresAt } = createSession(req);
+    user.lastLoginAt = new Date().toISOString();
+    const { sid, expiresAt } = createUserSession(db, user.id);
     setSessionCookie(req, res, sid, (expiresAt - Date.now()) / 1000);
-    console.log(`[auth] 登录成功（${ip}），会话有效期至 ${new Date(expiresAt).toLocaleString('zh-CN')}`);
-    sendJson(res, 200, { authenticated: true, expiresAt: new Date(expiresAt).toISOString(), sessionEndMinutes: SESSION_END_MINUTE });
+    saveDb();
+    console.log('[auth] 登录 ' + phone.slice(0,3) + '****' + phone.slice(-4) + '，积分 ' + user.credits);
+    sendJson(res, 200, { authenticated: true, user: publicUser(user), expiresAt: new Date(expiresAt).toISOString() });
   },
+
+  'GET /api/me': async (req, res) => {
+    const user = currentUser(req);
+    if (!user) return sendError(res, 401, '未登录');
+    sendJson(res, 200, { user: publicUser(user) });
+  },
+
+  'POST /api/credits/redeem': async (req, res) => {
+    const user = currentUser(req);
+    if (!user) return sendError(res, 401, '未登录');
+    const body = await readJsonBody(req);
+    const r = redeemCode(db, user, body.code);
+    if (!r.ok) return sendError(res, 400, r.error);
+    saveDb();
+    sendJson(res, 200, { credits: r.credits, balance: r.balance, user: publicUser(user) });
+  },
+
+  'POST /api/admin/codes': async (req, res) => {
+    const user = currentUser(req);
+    if (!user || user.role !== 'admin') return sendError(res, 403, '需要管理员权限');
+    const body = await readJsonBody(req);
+    const codes = createCodes(db, { count: body.count, credits: body.credits, createdBy: user.id });
+    saveDb();
+    sendJson(res, 201, { codes });
+  },
+
 
   'GET /api/auth/session': async (req, res) => {
     const session = currentSession(req);
@@ -1651,7 +1716,8 @@ const ROUTES = {
       });
     }
 
-    const batch = createBatch({ fileIds, operation, durations: body.durations || {}, erasePreset: body.erasePreset, eraseRegion: body.eraseRegion, eraseMode: body.eraseMode, modelVersion: body.modelVersion });
+    const batch = createBatch({
+    userId: currentUser(req)?.id || null, fileIds, operation, durations: body.durations || {}, erasePreset: body.erasePreset, eraseRegion: body.eraseRegion, eraseMode: body.eraseMode, modelVersion: body.modelVersion });
     sendJson(res, 202, { ...serializeBatch(batch), poll: `/api/batches/${batch.id}` });
   },
 
@@ -1759,11 +1825,21 @@ const ROUTES = {
       return sendError(res, 507, diskLowMessage(diskCheck.free), { freeBytes: diskCheck.free, minFreeBytes: diskCheck.minFree });
     }
     const picked = pickedIndexes(req, body, batch.items.length);
+    const insufficient = [];
     let started = 0;
     for (const idx of picked) {
+
+    // 扣费：1 秒 = 1 积分，幂等（同一任务只扣一次）
+    const me = currentUser(req);
       const tid = batch.items[idx]?.taskId;
       const task = db.tasks[tid];
       if (!task || task.status === 'processing' || task.status === 'succeeded') continue;
+      if (me && !task.chargedCredits) {
+        const cr = chargeSeconds(db, me, task.durationSec || 1, task.id);
+        if (!cr.ok) { insufficient.push(task.fileName || task.id); continue; }
+        task.chargedCredits = cr.cost;
+        task.userId = task.userId || me.id;
+      }
       task.status = 'pending';
       task.progress = 0;
       task.stage = '等待开始';
@@ -1779,7 +1855,11 @@ const ROUTES = {
     }
     saveDb();
     console.log(`[batch] ${batch.id} 批量开始：勾选 ${picked.length} 行 → 排队 ${started} 个任务`);
-    sendJson(res, 202, { started, ...serializeBatch(batch), poll: `/api/batches/${batch.id}` });
+    sendJson(res, 202, {
+      started, insufficient, poll: `/api/batches/${batch.id}`,
+      ...(insufficient.length ? { error: `积分不足，${insufficient.length} 个未开始（需要 ${insufficient.length && insufficient.length} 积分）` } : {}),
+      ...serializeBatch(batch),
+    });
   },
 
 /**
@@ -2077,6 +2157,7 @@ function matchRoute(method, pathname) {
 /** 无需登录即可访问的接口（登录本身，以及让未登录页面判断会话状态） */
 const PUBLIC_ROUTES = new Set([
   'POST /api/auth/login',
+  'POST /api/auth/register',
   'GET /api/auth/session',
   'POST /api/auth/logout',
 ]);
@@ -2117,6 +2198,20 @@ const server = http.createServer(async (req, res) => {
   const capabilityUrl =
     (req.method === 'GET' || req.method === 'HEAD') && /^\/f\/vf_[A-Za-z0-9_-]+$/.test(url.pathname);
   const authless = PUBLIC_ROUTES.has(`${req.method} ${url.pathname}`) || capabilityUrl;
+
+  // 归属校验：批次/任务必须属于当前用户（管理员例外，历史无主数据放行）
+  if (!authless) {
+    const me = currentUser(req);
+    if (me && me.role !== 'admin') {
+      const mB = /^\/api\/batches\/([^/]+)/.exec(url.pathname);
+      const mT = /^\/api\/(?:tasks|download|artifacts)\/([^/]+)/.exec(url.pathname);
+      const owner = mB ? db.batches[mB[1]] : mT ? db.tasks[mT[1]] : null;
+      if (owner && owner.userId && owner.userId !== me.id) {
+        return sendError(res, 404, '资源不存在');
+      }
+    }
+  }
+
   if (!authless && !currentSession(req)) {
     // 便于排查「莫名掉登录」：记录是否携带了 Cookie
     console.warn(`[auth] 401 ${req.method} ${url.pathname} cookie=${req.headers.cookie ? `已携带(${String(req.headers.cookie).slice(0, 40)}…)` : '未携带'}`);
@@ -2138,6 +2233,11 @@ const server = http.createServer(async (req, res) => {
     if (!res.headersSent) sendError(res, err.status || 500, err.message || '服务器内部错误');
   }
 });
+
+try {
+  const admin = ensureAdmin(db, { phone: normalizePhone(process.env.ADMIN_PHONE), password: process.env.ADMIN_PASSWORD });
+  if (admin) saveDb();
+} catch (err) { console.warn('[accounts]', err.message); }
 
 server.listen(PORT, HOST, async () => {
   // 先接管/清理上次运行遗留的「处理中」任务，再开始服务

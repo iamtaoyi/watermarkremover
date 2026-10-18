@@ -16,17 +16,23 @@
       <span class="mark auth-mark" aria-hidden="true"></span>
       <h1>ClipFlow</h1>
       <p class="auth-sub">全自动视频去字幕 · 军石科技内部使用</p>
-      <label class="field">
-        <span>访问 Token</span>
-        <input id="tokenInput" name="token" type="password" placeholder="粘贴管理员分配的 Token"
-               autocomplete="current-password" spellcheck="false" required />
-      </label>
+        <label class="field">
+          <span>手机号</span>
+          <input id="phoneInput" name="phone" type="tel" inputmode="numeric" placeholder="11 位手机号"
+                 autocomplete="username" spellcheck="false" required />
+        </label>
+        <label class="field">
+          <span>密码</span>
+          <input id="passwordInput" name="password" type="password" placeholder="至少 6 位"
+                 autocomplete="current-password" required />
+        </label>
       <p class="auth-error" id="authError" hidden></p>
-      <button class="btn btn-primary auth-submit" id="loginBtn" type="submit">进入工作台</button>
-      <p class="auth-hint">
-        会话有效期至 <b id="authSessionEnd">今天 23:59</b>，次日需要重新登录。<br />
-        不知道填什么？请联系管理员获取访问 Token。
-      </p>
+      <button class="btn btn-primary auth-submit" id="loginBtn" type="submit">登录</button>
+        <button class="btn btn-ghost auth-submit" id="registerBtn" type="button" style="margin-top:8px">没有账号？注册</button>
+        <p class="auth-hint">
+          登录后 30 天内免重复登录；页头会显示积分余额。<br />
+          处理视频按秒扣积分（1 秒 = 1 积分），可用卡密充值。
+        </p>
     </form>
   </div>
 
