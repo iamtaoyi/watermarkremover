@@ -103,6 +103,7 @@ function markBusy(btn, text) {
 function clearBusy(btn) {
   if (!btn) return;
   delete btn.dataset.busy;
+  btn.disabled = false;
   if (btn.dataset.prevText) { btn.textContent = btn.dataset.prevText; delete btn.dataset.prevText; }
 }
 document.addEventListener('click', (e) => {
@@ -157,6 +158,12 @@ async function jsonApi(path, opts) {
 function showLogin(message) {
   stopPolling();
   el.appShell.hidden = true;
+  // 兜底：登录按钮若残留 busy 状态会点不动，这里强制复位
+  if (el.loginBtn) {
+    el.loginBtn.disabled = false;
+    delete el.loginBtn.dataset.busy;
+    el.loginBtn.textContent = "登录";
+  }
   el.authGate.hidden = false;
   if (message) {
     el.authError.textContent = message;
