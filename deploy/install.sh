@@ -269,10 +269,31 @@ main() {
   write_env
   fix_perms
   install_service
+  verify_files
   if [ "${SKIP_SYSTEMD:-0}" = "1" ]; then
     log "演练模式：启动命令 → cd ${APP_DIR} && set -a && . ./clipflow.env && node server.mjs"
   fi
   summary
 }
+
+verify_files() {
+  # 与解包目录（$SRC_DIR）逐字节比对，确认所有文件都已拷到安装目录
+  local miss=0 total=0 f
+  for f in server.mjs pipeline.mjs accounts.mjs ratelimit.mjs package.json \
+           public/index.html public/app.js public/styles.css public/md5.js public/md5-worker.js public/favicon.svg; do
+    [ -f "$SRC_DIR/$f" ] || continue
+    total=$((total + 1))
+    if ! cmp -s "$SRC_DIR/$f" "$APP_DIR/$f"; then
+      warn "文件不一致或缺失: $f"
+      miss=$((miss + 1))
+    fi
+  done
+  if [ "$miss" -ne 0 ]; then
+    warn "校验失败：${miss}/${total} 个文件与解包目录不一致，请检查拷贝清单"
+    exit 1
+  fi
+  log "文件校验通过（${total} 个文件逐字节一致）"
+}
+
 
 main "$@"
