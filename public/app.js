@@ -18,7 +18,7 @@ const el = {
   adminCodes: $('#adminCodes'), adminCopy: $('#adminCopy'), adminCopyRow: $('#adminCopyRow'), adminHint: $('#adminHint'),
   uploadCard: $('#uploadCard'), dropzone: $('#dropzone'), fileInput: $('#fileInput'),
   dropHint: $('#dropHint'), quota: $('#quota'),
-  erasePreset: $('#erasePreset'), eraseHint: $('#eraseHint'),
+  erasePreset: $('#erasePreset'), enhanceToggle: $('#enhanceToggle'), eraseHint: $('#eraseHint'),
   batchCard: $('#batchCard'), batchSub: $('#batchSub'), batchPill: $('#batchPill'), notice: $('#notice'),
   diskWarn: $('#diskWarn'),
   bigDone: $('#bigDone'), cDone: $('#cDone'), cRun: $('#cRun'), cUp: $('#cUp'),
@@ -467,8 +467,8 @@ async function ensureBatch() {
   try {
     const data = state.batchId
       // 已有批次 → 追加（分批添加）
-      ? await jsonApi(`/api/batches/${state.batchId}/items`, { method: 'POST', body: JSON.stringify({ fileIds, durations, erasePreset: el.erasePreset?.value || 'standard' }) })
-      : await jsonApi('/api/batches', { method: 'POST', body: JSON.stringify({ fileIds, operation: 'erase-subtitle', durations, erasePreset: el.erasePreset?.value || 'standard' }) });
+      ? await jsonApi(`/api/batches/${state.batchId}/items`, { method: 'POST', body: JSON.stringify({ fileIds, durations, erasePreset: el.erasePreset?.value || 'standard', enhance: el.enhanceToggle?.checked === true }) })
+      : await jsonApi('/api/batches', { method: 'POST', body: JSON.stringify({ fileIds, operation: 'erase-subtitle', durations, erasePreset: el.erasePreset?.value || 'standard', enhance: el.enhanceToggle?.checked === true }) });
     if (!state.batchId) {
       state.batchId = data.batch.id;
       try { localStorage.setItem(STORE_KEY, state.batchId); } catch { /* 忽略 */ }

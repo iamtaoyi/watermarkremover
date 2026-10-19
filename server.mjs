@@ -18,6 +18,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
+import { enhanceVideo } from './pipeline.mjs';
 import { normalizePhone, findUserByPhone, createUser, checkPassword, publicUser, createUserSession, chargeSeconds, refundSeconds, createCodes, redeemCode, ensureAdmin, setPassword, touchSession } from './accounts.mjs';
 import { take as takeToken, stats as rateStats } from './ratelimit.mjs';
 import { fileURLToPath } from 'node:url';
@@ -1107,17 +1108,35 @@ async function execute(task) {
     recordRtf(task);
     task.remoteTaskId = outcome.remoteTaskId || task.remoteTaskId || null;
     delete task.resume;
+    let finalRemoteUrl = outcome.remoteUrl || null;
+    let finalSize = kept ? stat.size : (outcome.size || 0);
+    let enhanced = false;
+    if (task.enhance && !kept && finalRemoteUrl) {
+      try {
+        console.log(`[enhance] 任务 ${task.id} 开始超清（原片 ${task.durationSec || '?'}s，已扣 ${task.chargedCredits} 积分）`);
+        const enh = await enhanceVideo(finalRemoteUrl);
+        if (enh && enh.url) {
+          finalRemoteUrl = enh.url;
+          finalSize = enh.size || finalSize;
+          enhanced = true;
+          console.log(`[enhance] 任务 ${task.id} 超清完成（用时 ${enh.elapsedSeconds}s）`);
+        }
+      } catch (err) {
+        console.warn(`[enhance] 任务 ${task.id} 超清失败，回退到去字幕结果（积分不退还）：${err.message}`);
+      }
+    }
     task.result = {
-      name: `${path.basename(file.name, file.ext)}-无字幕${op.outputExt}`,
-      size: kept ? stat.size : (outcome.size || 0),
+      name: `${path.basename(file.name, file.ext)}-无字幕${enhanced ? '-超清' : ''}${op.outputExt}`,
+      size: finalSize,
       hasVideo: true,
       poster: true,
       remote: !kept,
     };
     if (!kept) {
-      task.remoteResultUrl = outcome.remoteUrl || null;
-      task.remoteExpiresAt = urlExpiry(outcome.remoteUrl);
+      task.remoteResultUrl = finalRemoteUrl;
+      task.remoteExpiresAt = urlExpiry(finalRemoteUrl);
     }
+    task.enhanceDone = enhanced;
     rememberResult(task);        // 登记"内容 → 产物"（必须在 result 赋值之后），供之后的同内容复用
     console.log(
       `[worker] ${task.id} 去字幕完成，用时 ${outcome.durationMs}ms，产物 ${formatBytes(kept ? stat.size : (outcome.size || 0))}${kept ? '' : '（云端保存，未落盘）'}`,
@@ -1213,7 +1232,7 @@ function freeDiskBytes(dir = DATA_DIR) {
  * 建一条任务记录（不排队）。批次里的每个「唯一内容」都走这里，
  * 单文件接口也复用，保证两种入口的字段一致。
  */
-function createTaskForFile(file, { operation = DEFAULT_OPERATION, durationSec, userId, eraseRegion, eraseMode, modelVersion } = {}) {
+function createTaskForFile(file, { operation = DEFAULT_OPERATION, durationSec, userId, enhance = false, eraseRegion, eraseMode, modelVersion } = {}) {
   const dur = Number(durationSec);
   const hasDuration = Number.isFinite(dur) && dur > 0.5 && dur < 6 * 3600;
   const mode = resolveEraseMode(eraseMode || OPERATIONS[operation]?.mode || 'Subtitle');
@@ -1231,6 +1250,7 @@ function createTaskForFile(file, { operation = DEFAULT_OPERATION, durationSec, u
     fileName: file.name,
     fileSize: file.size,
     userId: userId || null,
+    enhance: !!enhance,
     operation,
     operationLabel: OPERATIONS[operation].label,
     mode,                                        // Subtitle | Text
@@ -1369,7 +1389,7 @@ function appendFilesToBatch(batch, fileIds, durations = {}, overrides = {}) {
       model: overrides.modelVersion,
     });
     const task = createTaskForFile(file, {
-      operation: batch.operation, durationSec: durations[fid], userId: batch.userId || null,
+      operation: batch.operation, durationSec: durations[fid], userId: batch.userId || null, enhance: batch.enhance || false,
       eraseRegion: eff.region, eraseMode: eff.mode, modelVersion: eff.model,
     });
     task.erasePreset = eff.preset;
@@ -1382,13 +1402,14 @@ function appendFilesToBatch(batch, fileIds, durations = {}, overrides = {}) {
   return added;
 }
 
-function createBatch({ fileIds, operation = DEFAULT_OPERATION, durations = {}, userId, erasePreset = 'standard', eraseRegion, eraseMode, modelVersion } = {}) {
+function createBatch({ fileIds, operation = DEFAULT_OPERATION, durations = {}, userId, enhance = false, erasePreset = 'standard', eraseRegion, eraseMode, modelVersion } = {}) {
   db.batches ||= {};
   const batch = {
     id: id('batch'),
     createdAt: new Date().toISOString(),
     operation,
     erasePreset: resolveErasePreset(erasePreset),
+    enhance: !!enhance,
     userId: userId || null,
     taskIds: [],
     items: [],
@@ -1893,14 +1914,15 @@ const ROUTES = {
       const me = currentUser(req);
       if (me && me.role !== 'admin' && !me.whitelisted) {
         const dur = body.durations || {};
-        const need = (body.fileIds || []).reduce((sum, fid) => sum + Math.max(1, Math.ceil(Number(dur[fid]) || 0)), 0);
+        const factor = body.enhance === true ? 2 : 1;
+        const need = (body.fileIds || []).reduce((sum, fid) => sum + Math.max(1, Math.ceil(Number(dur[fid]) || 0)), 0) * factor;
         if (need > 0 && (me.credits || 0) < need) {
           return sendError(res, 402, `积分不足：预计需要 ${need} 积分，当前 ${me.credits || 0}，请先充值`, { need, have: me.credits || 0 });
         }
       }
     }
     const batch = createBatch({
-    userId: currentUser(req)?.id || null, fileIds, operation, durations: body.durations || {}, erasePreset: body.erasePreset, eraseRegion: body.eraseRegion, eraseMode: body.eraseMode, modelVersion: body.modelVersion });
+    userId: currentUser(req)?.id || null, enhance: body.enhance === true, fileIds, operation, durations: body.durations || {}, erasePreset: body.erasePreset, eraseRegion: body.eraseRegion, eraseMode: body.eraseMode, modelVersion: body.modelVersion });
     sendJson(res, 202, { ...serializeBatch(batch), poll: `/api/batches/${batch.id}` });
   },
 
@@ -1942,7 +1964,7 @@ const ROUTES = {
     if (free !== null && free < needBytes + DISK_RESERVE_BYTES) {
       return sendError(res, 507, '服务器磁盘空间不足，无法接收这批任务', { needBytes, freeBytes: free, reserveBytes: DISK_RESERVE_BYTES });
     }
-    const added = appendFilesToBatch(batch, fileIds, body.durations || {}, { erasePreset: body.erasePreset || batch.erasePreset, eraseRegion: body.eraseRegion, eraseMode: body.eraseMode, modelVersion: body.modelVersion });
+    const added = appendFilesToBatch(batch, fileIds, body.durations || {}, { erasePreset: body.erasePreset || batch.erasePreset, enhance: body.enhance === true ? true : undefined, eraseRegion: body.eraseRegion, eraseMode: body.eraseMode, modelVersion: body.modelVersion });
     saveDb();
     console.log(`[batch] ${batch.id} 追加 ${added.length} 个文件（其中 ${added.filter((a) => a.shared).length} 个复用已有任务），现共 ${batch.items.length} 个`);
     sendJson(res, 202, { added: added.length, ...serializeBatch(batch), poll: `/api/batches/${batch.id}` });
@@ -2018,7 +2040,7 @@ const ROUTES = {
       const task = db.tasks[tid];
       if (!task || task.status === 'processing' || task.status === 'succeeded') continue;
       if (me && !task.chargedCredits) {
-        const cr = chargeSeconds(db, me, task.durationSec || 1, task.id);
+        const cr = chargeSeconds(db, me, (task.durationSec || 1) * (task.enhance ? 2 : 1), task.id);
         if (!cr.ok) { insufficient.push(task.fileName || task.id); continue; }
         task.chargedCredits = cr.cost;
         task.userId = task.userId || me.id;
@@ -2193,6 +2215,14 @@ batch.items.splice(idx, 1);
       return sendError(res, 507, diskLowMessage(diskCheck.free), { freeBytes: diskCheck.free, minFreeBytes: diskCheck.minFree });
     }
     if (task.status === 'processing') return sendError(res, 409, '任务正在处理中');
+    // 扣费（与批量开始一致；已扣过的任务不重复扣）
+    const meT = currentUser(req);
+    if (meT && !task.chargedCredits) {
+      const cr = chargeSeconds(db, meT, (task.durationSec || 1) * (task.enhance ? 2 : 1), task.id);
+      if (!cr.ok) return sendError(res, 402, `积分不足：需要 ${cr.need}，当前 ${cr.have}`, { need: cr.need, have: cr.have });
+      task.chargedCredits = cr.cost;
+      task.userId = task.userId || meT.id;
+    }
     const body = await readJsonBody(req).catch(() => ({}));
     if (task.status === 'succeeded' && !body.force) {
       return sendError(res, 409, '任务已完成；如需重新处理请传 force: true', { status: task.status });
