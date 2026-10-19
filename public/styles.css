@@ -684,3 +684,6 @@ main.container { padding-bottom: 64px; }
 .admin-select { font-family: inherit; font-size: 12.5px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
 .admin-code-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .admin-code-row .mono { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ink); }
+
+.admin-row select { font-family: inherit; font-size: 13px; padding: 7px 10px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--soft); color: var(--ink); cursor: pointer; }
