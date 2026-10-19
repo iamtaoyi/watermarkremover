@@ -2040,6 +2040,14 @@ const ROUTES = {
       const task = db.tasks[tid];
       if (!task || task.status === 'processing' || task.status === 'succeeded') continue;
       if (me && !task.chargedCredits) {
+        // 积分不足以覆盖「超清 2 倍」→ 自动去掉超清，按普通模式处理
+        if (me && task.enhance) {
+          const base = Math.max(1, Math.ceil(Number(task.durationSec) || 0));
+          if ((me.credits || 0) < base * 2) {
+            task.enhance = false;
+            console.log(`[enhance] ${task.id} 积分不足以覆盖超清（需 ${base * 2}，余 ${me.credits || 0}），已自动按普通模式处理`);
+          }
+        }
         const cr = chargeSeconds(db, me, (task.durationSec || 1) * (task.enhance ? 2 : 1), task.id);
         if (!cr.ok) { insufficient.push(task.fileName || task.id); continue; }
         task.chargedCredits = cr.cost;
@@ -2218,6 +2226,14 @@ batch.items.splice(idx, 1);
     // 扣费（与批量开始一致；已扣过的任务不重复扣）
     const meT = currentUser(req);
     if (meT && !task.chargedCredits) {
+      // 积分不足以覆盖「超清 2 倍」→ 自动去掉超清
+      if (meT && task.enhance) {
+        const base = Math.max(1, Math.ceil(Number(task.durationSec) || 0));
+        if ((meT.credits || 0) < base * 2) {
+          task.enhance = false;
+          console.log(`[enhance] ${task.id} 积分不足以覆盖超清（需 ${base * 2}，余 ${meT.credits || 0}），已自动按普通模式处理`);
+        }
+      }
       const cr = chargeSeconds(db, meT, (task.durationSec || 1) * (task.enhance ? 2 : 1), task.id);
       if (!cr.ok) return sendError(res, 402, `积分不足：需要 ${cr.need}，当前 ${cr.have}`, { need: cr.need, have: cr.have });
       task.chargedCredits = cr.cost;

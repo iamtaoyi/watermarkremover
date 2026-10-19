@@ -18,7 +18,7 @@ const el = {
   adminCodes: $('#adminCodes'), adminCopy: $('#adminCopy'), adminCopyRow: $('#adminCopyRow'), adminHint: $('#adminHint'),
   uploadCard: $('#uploadCard'), dropzone: $('#dropzone'), fileInput: $('#fileInput'),
   dropHint: $('#dropHint'), quota: $('#quota'),
-  erasePreset: $('#erasePreset'), enhanceToggle: $('#enhanceToggle'), eraseHint: $('#eraseHint'),
+  erasePreset: $('#erasePreset'), enhanceToggle: $('#enhanceToggle'), enhanceHint: $('#enhanceHint'), eraseHint: $('#eraseHint'),
   batchCard: $('#batchCard'), batchSub: $('#batchSub'), batchPill: $('#batchPill'), notice: $('#notice'),
   diskWarn: $('#diskWarn'),
   bigDone: $('#bigDone'), cDone: $('#cDone'), cRun: $('#cRun'), cUp: $('#cUp'),
@@ -667,6 +667,7 @@ function renderNow() {
     if (state.openKey === r.key) el.list.appendChild(panelNode(r));
   });
   pruneSelection(rows);
+  try { syncEnhance(); } catch { /* 忽略 */ }
   renderSummary(rows);
   renderDiskWarn();
   renderBatchButtons(rows);
@@ -1296,7 +1297,28 @@ async function restore() {
   if (el.switchMode) el.switchMode.addEventListener('click', (e) => { e.preventDefault(); setAuthMode(authMode === 'login' ? 'register' : 'login'); });
 
   /** 页头积分徽标（点击输入卡密充值） */
-  function renderCredits() {
+  
+/** 超清可用性：积分不足以覆盖 2 倍秒数时，自动取消勾选并禁用 + 提示充值 */
+function syncEnhance() {
+  const box = el.enhanceToggle;
+  if (!box) return;
+  const u = state.session?.user;
+  if (!u) return;
+  const privileged = u.role === 'admin' || u.whitelisted;
+  let need = 0;
+  try { need = viewRows().reduce((sum, r) => sum + Math.max(1, Math.ceil(Number(r.durationSec) || 0)), 0); } catch { need = 0; }
+  const enough = privileged || (u.credits || 0) >= need * 2;
+  if (!enough && need > 0 && box.checked) {
+    box.checked = false;
+    toast('积分不足以覆盖超清，已自动取消勾选');
+  }
+  box.disabled = !enough && need > 0;
+  if (el.enhanceHint) {
+    el.enhanceHint.textContent = !enough && need > 0 ? `积分不足（超清需 ${need * 2}，当前 ${u.credits || 0}），请先充值` : '';
+  }
+}
+
+function renderCredits() {
     const u = state.session?.user;
     if (!u) return;
     let badge = document.getElementById('creditsBadge');
@@ -1546,6 +1568,7 @@ async function refreshHeader() {
     }
     badge.textContent = `积分 ${u.credits} · 充值`;
     if (el.adminBtn) el.adminBtn.hidden = u.role !== 'admin';
+    try { syncEnhance(); } catch { /* 忽略 */ }
   } catch { /* 忽略 */ }
 }
 
