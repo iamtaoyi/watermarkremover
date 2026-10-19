@@ -1452,6 +1452,7 @@ el.logoutBtn.addEventListener('click', async () => {
   sessionEndsAt = null;
   state.session = { authenticated: false };
   showLogin();
+    clearBusy(el.logoutBtn);   // 复位按钮，否则下次登录后仍显示「正在退出…」
 });
 
 let pickGuard = 0;

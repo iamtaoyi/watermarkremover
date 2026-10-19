@@ -47,6 +47,8 @@
 
 * { box-sizing: border-box; }
 html, body { min-height: 100%; }
+/* 页脚贴底：整页纵向布局，内容不足时 footer 由 margin-top:auto 推到底部 */
+body { min-height: 100vh; display: flex; flex-direction: column; }
 
 body {
   margin: 0;
@@ -366,7 +368,7 @@ main.container { padding-bottom: 64px; }
 /* ---------------------------------------------------------- 结果 */
 
 /* ---------------------------------------------------------- 页脚 */
-.site-footer { margin-top: 8px; }
+.site-footer { margin-top: auto; padding-top: 28px; padding-bottom: 24px; }
 .footer-inner {
   display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px;
   padding: 26px 0 34px; font-size: 12.5px; color: var(--ink-3);
@@ -687,3 +689,8 @@ main.container { padding-bottom: 64px; }
 
 .admin-row select { font-family: inherit; font-size: 13px; padding: 7px 10px; border-radius: 10px;
   border: 1px solid var(--line); background: var(--soft); color: var(--ink); cursor: pointer; }
+
+/* 页脚贴底：主内容撑满，页脚推到视口底部 */
+.shell { min-height: 100vh; display: flex; flex-direction: column; }
+.shell > main { flex: 1 0 auto; }
+.shell > .site-footer { flex: 0 0 auto; }
