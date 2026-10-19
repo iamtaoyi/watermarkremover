@@ -410,6 +410,7 @@ async function runUpload(item) {
   });
   if (pre.exists && pre.file) {
     item.fileId = pre.file.id;
+    if (item.canceled) return;
     item.phase = 'uploaded';
     item.deduped = true;
     item.stageText = `秒传命中，省下 ${fmtBytes(pre.savedBytes ?? item.size)}`;
@@ -526,7 +527,9 @@ async function poll() {
 /* ============================================================================
  * 渲染
  * ========================================================================== */
+let localSeq = 0;
 function localRow(it, i) {
+  if (!it.key) it.key = `local_${++localSeq}`;
   return {
     key: it.key,
     index: i + 1,
@@ -726,6 +729,11 @@ function rowNode(r) {
   mk(state.openKey === r.key ? '预览 ▾' : '预览 ▸', 'btn-ghost btn-preview', true, () => togglePreview(r.key));
   const act = rowAction(r);
   mk(act.text, act.cls, act.enabled, act.fn);
+  // 上传阶段的本地行：允许取消
+  if (r.local && ['hashing', 'uploading', 'queued'].includes(r.phase)) {
+    mk('取消上传', 'btn-ghost btn-stop', true, () => cancelUploadByKey(r.itemKey));
+  }
+
   // 移除任务：处理中不能移除；未开始 / 已完成 / 失败 都可以
   const canRemove = !['queued', 'running'].includes(r.status);
   mk('移除任务', 'btn-ghost btn-stop', canRemove, () => removeRow(r));
@@ -873,6 +881,17 @@ function renderSummary(rows) {
     ? `${uploading} 个文件正在上传…（上传完成后自动建批次）`
     : `共 ${files} 个文件${estBytes ? ` · 预计产物占用 ${fmtBytes(estBytes)}` : ''}`;
   el.diskInfo.innerHTML = `预计占用 <b>${fmtBytes(estBytes)}</b> / 可用 <b>${free ? fmtBytes(free) : '—'}</b>`;
+}
+
+/** 取消某个本地文件的上传/计算 */
+function cancelUploadByKey(key) {
+  const it = state.items.find((x) => x.key === key);
+  if (!it) return;
+  it.canceled = true;
+  try { it.xhr?.abort?.(); } catch { /* 忽略 */ }
+  state.items = state.items.filter((x) => x.key !== key);
+  render();
+  toast('已取消上传');
 }
 
 /** 批量操作条：批量开始 / 批量取消（只作用于勾选的行） */
@@ -1334,11 +1353,18 @@ if (el.adminBtn) {
           + `<span class="abuse-tag">${c.credits} 积分</span>`
           + `<span class="admin-hint" style="flex:1">${state}</span>`
           + `<span class="admin-hint">${String(c.createdAt || '').slice(5, 10)}</span>`
+          + `<button class="btn-text" data-copy="${c.code}" type="button">复制</button>`
           + (c.usedAt
               ? `<span class="admin-hint" title="已兑换的卡密不可删除">—</span>`
               : `<button class="btn-text" data-del="${c.code}" type="button">删除</button>`)
           + `</div>`;
       }).join('');
+      box.querySelectorAll('button[data-copy]').forEach((b) => {
+        b.addEventListener('click', async () => {
+          try { await navigator.clipboard.writeText(b.dataset.copy); toast('已复制卡密'); }
+          catch { toast(`复制失败，卡密：${b.dataset.copy}`); }
+        });
+      });
       box.querySelectorAll('button[data-del]').forEach((b) => {
         b.addEventListener('click', async () => {
           const code = b.dataset.del;
