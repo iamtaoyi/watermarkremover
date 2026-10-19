@@ -74,6 +74,7 @@
           <span class="pill" id="quota">0 / 10</span>
         </div>
         <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="选择视频文件">
+            <input id="fileInput" class="file-input" type="file" accept="video/*,.mkv,.ts,.flv,.wmv,.m4v" multiple />
           <div class="up-icon" aria-hidden="true">↑</div>
           <strong>拖拽视频到这里，或点击选择</strong>
           <div class="hint" id="dropHint">正在读取支持格式…</div>
@@ -88,7 +89,6 @@
             <span class="hint-inline" id="eraseHint">标准模式：识别常规字幕（快）；全屏模式：擦画面任何位置的文字与文字水印（含画面上部字幕、移动文字水印），耗时明显更长</span>
           </div>
         <div class="notice notice-danger" id="diskWarn" hidden></div>
-        <input id="fileInput" type="file" accept="video/*,.mkv,.ts,.flv,.wmv,.m4v" multiple hidden />
       </section>
 
       <!-- ===================== 批次任务 ===================== -->

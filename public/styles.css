@@ -211,6 +211,7 @@ main.container { padding-bottom: 64px; }
 
 /* ---------------------------------------------------------- 投放区 */
 .dropzone {
+  position: relative;
   display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px;
   padding: clamp(44px, 6vw, 62px) 24px;
   border: 1.5px dashed #d9dde3; border-radius: 18px; background: var(--soft-2);
@@ -694,3 +695,7 @@ main.container { padding-bottom: 64px; }
 .shell { min-height: 100vh; display: flex; flex-direction: column; }
 .shell > main { flex: 1 0 auto; }
 .shell > .site-footer { flex: 0 0 auto; }
+
+/* 上传输入框：铺满拖拽区、完全透明 —— 点击由浏览器原生触发，
+   不再依赖 JS 的 input.click()（Safari 等浏览器对 display:none 的 input 会静默失败） */
+.file-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; padding: 0; }

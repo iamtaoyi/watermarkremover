@@ -314,7 +314,8 @@ async function acceptFiles(fileList) {
   {
     const probeFiles = [...(fileList || [])].filter(Boolean);
     const me = state.session?.user;
-    const privileged = me && (me.role === 'admin' || me.whitelisted);
+      // 拿不到用户信息（会话未加载完）时不限制；真实额度由服务端建批次时校验
+      const privileged = !me || me.role === 'admin' || me.whitelisted;
     if (probeFiles.length && !privileged) {
       const probe = (file) => new Promise((resolve) => {
         try {
@@ -330,7 +331,7 @@ async function acceptFiles(fileList) {
       const durations = await Promise.all(probeFiles.map(probe));
       const need = durations.reduce((sum, d) => sum + Math.max(1, Math.ceil(d || 0)), 0);
       const credits = me?.credits ?? 0;
-      if (credits <= 0 || need > credits) {
+        if (need > 0 && credits < need) {
         el.diskWarn.hidden = false;
         el.diskWarn.textContent = `积分不足：这批视频预计需要 ${need} 积分，当前 ${credits} 积分。请先点页头「积分 · 充值」输入卡密后再上传。`;
         toast(`积分不足：预计需要 ${need} 积分，当前 ${credits}`);
@@ -1497,12 +1498,7 @@ el.erasePreset?.addEventListener('change', async () => {
   } catch (err) { toast(`修改失败：${err.message}`); }
 });
 
-el.dropzone.addEventListener('click', () => {
-  const now = Date.now();
-  if (now - pickGuard < 600) return;     // 连点不要弹出两次选择框
-  pickGuard = now;
-  el.fileInput.click();
-});
+// 点击由覆盖在拖拽区上的透明 file input 原生触发（兼容 Safari），这里不再手动 click()
 el.dropzone.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.fileInput.click(); }
 });
