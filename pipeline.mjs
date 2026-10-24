@@ -351,7 +351,7 @@ async function awaitCloudResult(remoteTaskId, task, ctx, op, onProgress, assertA
     remoteTaskId,
     kept: !ctx.remoteArtifact,
     size: ctx.remoteArtifact?.size || 0,
-    remoteUrl: ctx.remoteArtifact?.url || null,
+    remoteUrl: outputUrl,
   };
 }
 
@@ -441,23 +441,28 @@ export function formatBytes(n) {
  * 火山 AI MediaKit 的视频增强工具 enhance-video：输入一个「云端能拉到的视频地址」，
  * 输出超清后的视频地址。失败时由调用方决定是否回退到原产物（这里只负责抛错）。
  */
-export async function enhanceVideo(videoUrl, { pollMs = 4000, timeoutMs = 60 * 60 * 1000 } = {}) {
-  if (!process.env.AMK_API_KEY) throw new Error('未配置去字幕接口密钥（AMK_API_KEY）');
-  const submit = await fetchJson(`${apiBase()}/tools/enhance-video`, {
-    method: 'POST',
-    headers: apiHeaders(),
-    body: JSON.stringify({ video_url: videoUrl }),
-  }, 30000);
-  if (!submit.res.ok) throw new Error(`提交超清任务失败：HTTP ${submit.res.status}`);
-  const body = unwrap(submit.json);
-  if (body.root.success === false) throw new Error(`提交超清任务被拒绝：${body.field(['error', 'code']) || 'UnknownError'}`);
-  const taskId = body.field(['task_id', 'taskId', 'id']);
-  if (!taskId) throw new Error('超清接口未返回 task_id');
-  console.log(`[enhance] 已提交超清任务 task_id=${taskId}`);
+export async function enhanceVideo(videoUrl, { pollMs = 4000, timeoutMs = 60 * 60 * 1000, taskId = null, onSubmitted = () => {}, assertAlive = () => {} } = {}) {
+  assertAlive();
+  if (!taskId) {
+    if (!process.env.AMK_API_KEY) throw new Error('未配置去字幕接口密钥（AMK_API_KEY）');
+    const submit = await fetchJson(`${apiBase()}/tools/enhance-video`, {
+      method: 'POST',
+      headers: apiHeaders(),
+      body: JSON.stringify({ video_url: videoUrl }),
+    }, 30000);
+    if (!submit.res.ok) throw new Error(`提交超清任务失败：HTTP ${submit.res.status}`);
+    const body = unwrap(submit.json);
+    if (body.root.success === false) throw new Error(`提交超清任务被拒绝：${body.root.error?.code || body.field(['error_code', 'code']) || 'UnknownError'}`);
+    taskId = body.field(['task_id', 'taskId', 'id']);
+    if (!taskId) throw new Error('超清接口未返回 task_id');
+    onSubmitted(taskId);
+    console.log(`[enhance] 已提交超清任务 task_id=${taskId}`);
+  }
 
   const started = Date.now();
   let lastStatus = '';
   for (;;) {
+    assertAlive();
     if (Date.now() - started > timeoutMs) throw new Error('超清任务超时');
     await sleep(pollMs);
     const r = await fetchJson(`${apiBase()}/tasks/${taskId}`, { headers: apiHeaders() }, 30000);
@@ -465,19 +470,20 @@ export async function enhanceVideo(videoUrl, { pollMs = 4000, timeoutMs = 60 * 6
       if (r.res.status === 404) throw new Error(`超清任务不存在（${taskId}）`);
       throw new Error(`查询超清任务失败：HTTP ${r.res.status}`);
     }
+    assertAlive();
     const d = unwrap(r.json);
     const status = String(d.field(['status']) || '').toLowerCase();
     if (status && status !== lastStatus) { console.log(`[enhance] ${taskId} 状态=${status}`); lastStatus = status; }
     if (status === 'completed' || status === 'succeeded' || status === 'success') {
-      const url = d.field(['result', 'video_url']);
-      const duration = Number(d.field(['result', 'duration'])) || 0;
-      if (!url) throw new Error('超清完成但没有产物地址');
+      const url = pick(d.result, OUT_KEYS) || d.field(OUT_KEYS);
+      const duration = Number(d.result.duration ?? d.field(['duration'])) || 0;
+      if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) throw new Error('超清完成但没有有效产物地址');
       const size = await remoteSize(url);
       console.log(`[enhance] ${taskId} 完成，用时 ${Math.round((Date.now() - started) / 1000)}s，产物 ${formatBytes(size)}`);
       return { url, size, duration, remoteTaskId: taskId, elapsedSeconds: Math.round((Date.now() - started) / 1000) };
     }
     if (status === 'failed' || status === 'failure' || status === 'error') {
-      const msg = d.field(['error', 'message']) || d.field(['result', 'message']) || status;
+      const msg = d.env.error?.message || d.root.error?.message || d.result.message || d.field(['message']) || status;
       throw new Error(`超清任务失败：${msg}`);
     }
   }

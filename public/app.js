@@ -143,7 +143,7 @@ async function api(path, opts = {}) {
     clearTimeout(timer);
   }
   if (res.status === 401) {
-    showLogin('会话已过期，请重新输入访问 Token');
+    showLogin('会话已过期，请重新登录');
     throw Object.assign(new Error('未登录或会话已过期'), { code: 'UNAUTHORIZED' });
   }
   return res;
@@ -188,8 +188,8 @@ function startTicker() {
   state.tickTimer = setInterval(() => {
     if (!sessionEndsAt) return;
     const left = sessionEndsAt - Date.now();
-    el.sessionLeft.textContent = fmtCountdown(left);
-    if (left <= 0) showLogin('会话已过期，请重新输入访问 Token');
+    if (el.sessionLeft) el.sessionLeft.textContent = fmtCountdown(left);
+    if (left <= 0) showLogin('会话已过期，请重新登录');
   }, 1000);
 }
 
@@ -206,7 +206,7 @@ async function login(phone, password) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     sessionEndsAt = Date.parse(data.expiresAt);
-    el.sessionLeft.textContent = fmtCountdown(sessionEndsAt - Date.now());
+    if (el.sessionLeft) el.sessionLeft.textContent = fmtCountdown(sessionEndsAt - Date.now());
     return true;
   } finally {
     el.loginBtn.disabled = false;
@@ -383,6 +383,7 @@ async function processQueue() {
     uploadRunning += 1;
     runUpload(next)
       .catch((err) => {
+        if (next.canceled || err.name === 'AbortError') return;
         next.phase = 'failed';
         next.error = err.message || String(err);
         next.stageText = '上传失败';
@@ -398,17 +399,20 @@ async function processQueue() {
 
 async function runUpload(item) {
   item.durationSec = await probeDuration(item.file);
+  if (item.canceled) return;
   const md5 = await hashFile(item.file, (loaded, total) => {
     item.hashPct = total ? Math.round((loaded / total) * 100) : 0;
     item.stageText = `计算 MD5（本地） ${item.hashPct}%`;
     render();
   });
+  if (item.canceled) return;
   item.md5 = md5;
 
   const pre = await jsonApi('/api/uploads/precheck', {
     method: 'POST',
     body: JSON.stringify({ md5, name: item.name }),
   });
+  if (item.canceled) return;
   if (pre.exists && pre.file) {
     item.fileId = pre.file.id;
     if (item.canceled) return;
@@ -423,6 +427,7 @@ async function runUpload(item) {
   item.stageText = '上传中';
   render();
   const res = await uploadFile(item, md5);
+  if (item.canceled) return;
   item.fileId = res.file.id;
   item.phase = 'uploaded';
   item.stageText = res.deduped ? '上传完成（服务端已有相同文件）' : '上传完成';
@@ -450,6 +455,10 @@ function uploadFile(item, md5) {
       else reject(new Error(data.error || `上传失败 HTTP ${xhr.status}`));
     };
     xhr.onerror = () => reject(new Error('网络错误，上传失败'));
+    xhr.onabort = () => reject(Object.assign(new Error('上传已取消'), { name: 'AbortError' }));
+    xhr.ontimeout = () => reject(new Error('上传超时，请重试'));
+    xhr.timeout = 10 * 60 * 1000;
+    if (item.canceled) return xhr.onabort();
     xhr.send(item.file);
   });
 }
@@ -458,7 +467,7 @@ function uploadFile(item, md5) {
 async function ensureBatch() {
   if (state.syncing) return;
   if (state.items.some((it) => ['queued', 'hashing', 'uploading'].includes(it.phase))) return;
-  const ready = state.items.filter((it) => it.fileId && !it.added);
+  const ready = state.items.filter((it) => it.fileId && !it.added && !it.canceled);
   if (!ready.length) return;
   const durations = {};
   ready.forEach((it) => { if (it.durationSec) durations[it.fileId] = it.durationSec; });
@@ -467,8 +476,8 @@ async function ensureBatch() {
   try {
     const data = state.batchId
       // 已有批次 → 追加（分批添加）
-      ? await jsonApi(`/api/batches/${state.batchId}/items`, { method: 'POST', body: JSON.stringify({ fileIds, durations, erasePreset: el.erasePreset?.value || 'standard', enhance: el.enhanceToggle?.checked === true }) })
-      : await jsonApi('/api/batches', { method: 'POST', body: JSON.stringify({ fileIds, operation: 'erase-subtitle', durations, erasePreset: el.erasePreset?.value || 'standard', enhance: el.enhanceToggle?.checked === true }) });
+      ? await jsonApi(`/api/batches/${state.batchId}/items`, { method: 'POST', timeoutMs: 600000, body: JSON.stringify({ fileIds, durations, erasePreset: el.erasePreset?.value || 'standard', enhance: el.enhanceToggle?.checked === true }) })
+      : await jsonApi('/api/batches', { method: 'POST', timeoutMs: 600000, body: JSON.stringify({ fileIds, operation: 'erase-subtitle', durations, erasePreset: el.erasePreset?.value || 'standard', enhance: el.enhanceToggle?.checked === true }) });
     if (!state.batchId) {
       state.batchId = data.batch.id;
       try { localStorage.setItem(STORE_KEY, state.batchId); } catch { /* 忽略 */ }
@@ -537,6 +546,7 @@ function localRow(it, i) {
     fileName: it.name,
     sizeText: fmtBytes(it.size),
     durationSec: it.durationSec,
+    phase: it.phase,
     status: it.phase === 'hashing' ? 'hashing'
       : ['queued', 'uploading'].includes(it.phase) ? 'uploading'
       : it.phase === 'uploaded' ? 'idle' : 'upload-failed',
@@ -733,7 +743,7 @@ function rowNode(r) {
   mk(act.text, act.cls, act.enabled, act.fn);
   // 上传阶段的本地行：允许取消
   if (r.local && ['hashing', 'uploading', 'queued'].includes(r.phase)) {
-    mk('取消上传', 'btn-ghost btn-stop', true, () => cancelUploadByKey(r.itemKey));
+    mk('取消上传', 'btn-ghost btn-stop', true, () => cancelUploadByKey(r.key));
   }
 
   // 移除任务：处理中不能移除；未开始 / 已完成 / 失败 都可以
@@ -954,7 +964,8 @@ async function batchAction(kind) {
       const res = await jsonApi(`/api/batches/${state.batchId}/start`, {
         method: 'POST', body: JSON.stringify({ indexes }),
       });
-      toast(`已提交 ${res.started ?? indexes.length} 个任务，云端并行处理`);
+      toast(`已提交 ${res.started ?? indexes.length} 个任务`);
+      setNotice([res.error, ...(res.errors || []).map((e) => e.error)].filter(Boolean).join('；'));
     } else if (kind === 'delete') {
       const res = await jsonApi(`/api/batches/${state.batchId}/items`, { method: 'DELETE', body: JSON.stringify({ indexes }) });
       const parts = [];
@@ -1069,6 +1080,7 @@ async function removeRow(r) {
   // 批次还没建立（还在上传阶段）→ 纯本地移除，并中断进行中的上传
   if (r.local || !state.batchId) {
     const it = state.items.find((x) => x.key === r.key);
+    if (it) it.canceled = true;          // 让 runUpload 后续环节直接退出，不再上传
     // 已经上传到服务器的源文件也要一起清掉（源文件 + MD5 索引 + 内容索引）
     let purged = null;
     if (it?.fileId) {
@@ -1552,9 +1564,17 @@ async function redeemPrompt() {
 async function refreshHeader() {
   try {
     const res = await fetch('/api/auth/session', { credentials: 'same-origin' });
+    if (res.ok === false) return;        // 仅明确失败（5xx/网关）才跳过：保持现状，不要当成已登出
     const d = await res.json();
-    if (!d.authenticated) { if (el.adminBtn) el.adminBtn.hidden = true; return; }
+    if (!d.authenticated) {
+      if (el.adminBtn) el.adminBtn.hidden = true;
+      if (state.session.authenticated) showLogin('会话已过期，请重新登录');
+      state.session = { authenticated: false };
+      sessionEndsAt = null;
+      return;
+    }
     state.session = d;
+    sessionEndsAt = Date.parse(d.expiresAt);
     const u = d.user;
     if (!u) return;
     let badge = document.getElementById('creditsBadge');
@@ -1568,6 +1588,7 @@ async function refreshHeader() {
     }
     badge.textContent = `积分 ${u.credits} · 充值`;
     if (el.adminBtn) el.adminBtn.hidden = u.role !== 'admin';
+    if (el.sessionLeft) el.sessionLeft.textContent = fmtCountdown(sessionEndsAt - Date.now());
     try { syncEnhance(); } catch { /* 忽略 */ }
   } catch { /* 忽略 */ }
 }

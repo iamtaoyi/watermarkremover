@@ -54,6 +54,36 @@ install_packages() {
   else
     warn "未识别的包管理器，请自行确保 curl / tar / xz 可用"
   fi
+  install_ffprobe
+}
+
+# ffprobe 只用于探测时长（计费依据）。装不上不应阻断部署：
+#   1) 已有 ffprobe 或设置了 FFPROBE_PATH → 直接跳过
+#   2) 尝试用包管理器装 ffmpeg（Ubuntu/Debian 有；Alibaba Cloud Linux 默认仓库没有，需要 RPM Fusion）
+#   3) 仍失败 → 只告警：服务照常启动，但开始任务会返回 503 并提示安装
+install_ffprobe() {
+  [ "${SKIP_PACKAGES:-0}" = "1" ] && return 0
+  if command -v ffprobe >/dev/null 2>&1; then
+    log "ffprobe 已就绪：$(command -v ffprobe)"
+    return 0
+  fi
+  if [ -n "${FFPROBE_PATH:-}" ] && [ -x "${FFPROBE_PATH}" ]; then
+    log "ffprobe 已就绪（FFPROBE_PATH）：${FFPROBE_PATH}"
+    return 0
+  fi
+  log "尝试安装 ffprobe（ffmpeg）"
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get install -y -qq ffmpeg && { log "ffprobe 安装完成"; return 0; }
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y -q ffmpeg && { log "ffprobe 安装完成"; return 0; }
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y -q ffmpeg && { log "ffprobe 安装完成"; return 0; }
+  fi
+  warn "ffprobe 未安装：服务仍可启动，但「开始任务/建批次」会返回 503。任选一种解决："
+  warn "  · 配置 RPM Fusion 后执行 dnf install ffmpeg（Alibaba Cloud Linux 需要）"
+  warn "  · 下载静态 ffmpeg（含 ffprobe）解压到 /usr/local/bin"
+  warn "  · 在 ${APP_DIR}/clipflow.env 里设置 FFPROBE_PATH=/绝对路径/ffprobe"
+  return 0
 }
 
 # ---------------------------------------------------------------- 2. Node.js
@@ -124,13 +154,19 @@ prepare_user() {
 copy_app() {
   log "拷贝应用文件到 ${APP_DIR}"
   mkdir -p "$APP_DIR"
-  for f in server.mjs pipeline.mjs accounts.mjs ratelimit.mjs package.json README.md; do
+  for f in server.mjs pipeline.mjs media.mjs accounts.mjs ratelimit.mjs package.json README.md; do
     [ -f "$SRC_DIR/$f" ] && cp -f "$SRC_DIR/$f" "$APP_DIR/"
   done
   rm -rf "$APP_DIR/public"
   cp -R "$SRC_DIR/public" "$APP_DIR/public"
   [ -d "$SRC_DIR/deploy" ] && { rm -rf "$APP_DIR/deploy"; cp -R "$SRC_DIR/deploy" "$APP_DIR/deploy"; }
   [ -d "$SRC_DIR/scripts" ] && { rm -rf "$APP_DIR/scripts"; cp -R "$SRC_DIR/scripts" "$APP_DIR/scripts"; }
+  for extra in docs test; do
+    if [ -d "$SRC_DIR/$extra" ]; then
+      rm -rf "$APP_DIR/$extra"
+      cp -R "$SRC_DIR/$extra" "$APP_DIR/$extra"
+    fi
+  done
   # 构建号：精确到分钟的部署时间，页面底部展示（如 build202610141950）
   local build_id="${BUILD_ID:-build$(date +%Y%m%d%H%M)}"
   printf '%s\n' "$build_id" > "$APP_DIR/BUILD"
@@ -279,7 +315,7 @@ main() {
 verify_files() {
   # 与解包目录（$SRC_DIR）逐字节比对，确认所有文件都已拷到安装目录
   local miss=0 total=0 f
-  for f in server.mjs pipeline.mjs accounts.mjs ratelimit.mjs package.json \
+  for f in server.mjs pipeline.mjs media.mjs accounts.mjs ratelimit.mjs package.json \
            public/index.html public/app.js public/styles.css public/md5.js public/md5-worker.js public/favicon.svg; do
     [ -f "$SRC_DIR/$f" ] || continue
     total=$((total + 1))

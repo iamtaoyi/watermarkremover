@@ -2,7 +2,9 @@
 
 给公司内部员工用的 Web 网站：**输入 Token 登录 → 上传带字幕的视频 → 调用去字幕接口 → 在线预览 → 下载无字幕视频**。
 
-零第三方依赖（只用 Node.js 内置模块），`node server.mjs` 即可运行。
+Node.js 无第三方包依赖；服务端计费时长校验需要系统安装 `ffprobe`（FFmpeg 提供，可用 `FFPROBE_PATH` 指定可执行文件）。安装后运行 `node server.mjs`。
+
+当前版本使用手机号/密码登录、积分计费和批次任务；下文部分 Token 示例属于历史版本。修复说明与验证方式见 [可靠性修复说明](docs/reliability-fixes.md)。
 
 **去字幕只走指定的接口**（火山引擎 mediakit `erase-video-subtitle-pro`），代码里没有任何本地替代实现，也不会静默降级成「假装处理」；接口没配好时提交任务会被直接拒绝并说明缺什么。
 
